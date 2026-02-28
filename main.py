@@ -1,41 +1,76 @@
-import sys
+class Token:
+    def __init__(self, token_type, value):
+        self.type = token_type 
+        self.value = value   
 
-def tradutor():
-    texto_usuario = sys.argv[1]
-    lista_numeros = []
-    lista_operadores = []
-    resultado = 0
-    numero_atual = ""
-    
-    for caractere in texto_usuario:
-        if caractere.isdigit():
-            numero_atual += caractere
-        elif caractere in ["+", "-"]:
-            if numero_atual:
-                lista_numeros.append(int(numero_atual))
-                numero_atual = ""
-            lista_operadores.append(caractere)
-    
-    if numero_atual:
-        lista_numeros.append(int(numero_atual))
-    
-    if len(lista_numeros) == 0:
-        raise ValueError("Nenhum número encontrado.")
-    if len(lista_operadores) == 0:
-        raise ValueError("Nenhum operador encontrado.")
-    if len(lista_operadores) < 1 or len(lista_numeros) < 2:
-        raise ValueError("A expressão deve conter pelo menos dois números e um operador.")
-    if len(lista_operadores) != len(lista_numeros) - 1:
-        raise ValueError("O número de operadores deve ser um a menos que o número de números.")
 
-    resultado = lista_numeros[0]
-    for i in range(len(lista_operadores)):
-        if lista_operadores[i] == "+":
-            resultado += lista_numeros[i + 1]
-        elif lista_operadores[i] == "-":
-            resultado -= lista_numeros[i + 1]
-    
-    print(resultado)
-    return resultado
+class Lexer:
+    def __init__(self, source):
+        self.source = source
+        self.position = 0
+        self.next = None
 
-tradutor()
+    def select_next(self):
+        while self.position < len(self.source) and self.source[self.position]:
+            self.position += 1
+            char = self.source[self.position]
+
+            if self.position >= len(self.source):
+                self.next = Token("EOF", "")
+                return
+
+            if char == '+':
+                self.next = Token("PLUS", "+")
+                self.position += 1
+            elif char == '-':
+                self.next = Token("MINUS", "-")
+                self.position += 1
+                
+            elif char.isdigit():
+                num_str = char
+                self.position += 1
+                self.next = Token("INT", num_str)
+                
+            else:
+                raise ValueError(f"Simbolo invalido no lexer")
+
+
+class Parser:
+    lexer = None
+
+    def parse_expression():
+        if Parser.lexer.next.type != "INT":
+            raise ValueError(f"Erro no parser: tem que ser inteiro no começo da expressao")
+        
+        resultado = Parser.lexer.next.value
+        
+        Parser.lexer.select_next()
+
+        while Parser.lexer.next.type in ["PLUS", "MINUS"]:
+            operador = Parser.lexer.next.type
+            
+            Parser.lexer.select_next()
+            
+            if Parser.lexer.next.type != "INT":
+                raise ValueError(f"Erro no parser: tem que ser inteiro depois do operador")
+            
+            if operador == "PLUS":
+                resultado += Parser.lexer.next.value
+            elif operador == "MINUS":
+                resultado -= Parser.lexer.next.value
+                
+            Parser.lexer.select_next()
+            
+        return resultado
+
+    def run(code):
+        Parser.lexer = Lexer(code)
+        
+        Parser.lexer.select_next()
+        
+        resultado_final = Parser.parse_expression()
+        
+        if Parser.lexer.next.type != "EOF":
+             raise ValueError(f"Erro no parser: tem que ser EOF no final da expressao")
+             
+        return resultado_final
