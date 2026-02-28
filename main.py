@@ -1,3 +1,5 @@
+import sys
+
 class Token:
     def __init__(self, token_type, value):
         self.type = token_type 
@@ -46,7 +48,7 @@ class Parser:
         
         Parser.lexer.select_next()
 
-        while Parser.lexer.next.type in ["PLUS", "MINUS"]:
+        while Parser.lexer.next.type == "PLUS" or Parser.lexer.next.type == "MINUS":
             operador = Parser.lexer.next.type
             
             Parser.lexer.select_next()
@@ -74,3 +76,12 @@ class Parser:
              raise ValueError(f"Erro no parser: tem que ser EOF no final da expressao")
              
         return resultado_final
+    
+
+def main():
+    escrita_user = sys.argv[1]
+    resultado = Parser.run(escrita_user)
+    print(resultado)
+
+if __name__ == "__main__":    
+    main()
