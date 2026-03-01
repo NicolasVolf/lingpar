@@ -28,6 +28,9 @@ class Lexer:
         elif char == '-':
             self.next = Token("MINUS", "-")
             self.position += 1
+        elif char == '^':
+            self.next = Token("XOR", "^")
+            self.position += 1
             
         elif char.isdigit():
             num_str = char
@@ -52,7 +55,7 @@ class Parser:
         
         Parser.lexer.select_next()
 
-        while Parser.lexer.next.type == "PLUS" or Parser.lexer.next.type == "MINUS":
+        while Parser.lexer.next.type == "PLUS" or Parser.lexer.next.type == "MINUS" or Parser.lexer.next.type == "XOR":
             operador = Parser.lexer.next.type
             
             Parser.lexer.select_next()
@@ -64,6 +67,8 @@ class Parser:
                 resultado += int(Parser.lexer.next.value)
             elif operador == "MINUS":
                 resultado -= int(Parser.lexer.next.value)
+            elif operador == "XOR":
+                resultado ^= int(Parser.lexer.next.value)
                 
             Parser.lexer.select_next()
             
