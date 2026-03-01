@@ -13,28 +13,32 @@ class Lexer:
         self.next = None
 
     def select_next(self):
-        while self.position < len(self.source) and self.source[self.position]:
+        while self.position < len(self.source) and self.source[self.position].isspace():
             self.position += 1
-            char = self.source[self.position]
+            
+        if self.position >= len(self.source):
+            self.next = Token("EOF", "")
+            return
 
-            if self.position >= len(self.source):
-                self.next = Token("EOF", "")
-                return
+        char = self.source[self.position]
 
-            if char == '+':
-                self.next = Token("PLUS", "+")
+        if char == '+':
+            self.next = Token("PLUS", "+")
+            self.position += 1
+        elif char == '-':
+            self.next = Token("MINUS", "-")
+            self.position += 1
+            
+        elif char.isdigit():
+            num_str = char
+            self.position += 1
+            while self.position < len(self.source) and self.source[self.position].isdigit():
+                num_str += self.source[self.position]
                 self.position += 1
-            elif char == '-':
-                self.next = Token("MINUS", "-")
-                self.position += 1
-                
-            elif char.isdigit():
-                num_str = char
-                self.position += 1
-                self.next = Token("INT", num_str)
-                
-            else:
-                raise ValueError(f"Simbolo invalido no lexer")
+            self.next = Token("INT", int(num_str))
+            
+        else:
+            raise ValueError(f"Simbolo invalido no lexer")
 
 
 class Parser:
@@ -44,7 +48,7 @@ class Parser:
         if Parser.lexer.next.type != "INT":
             raise ValueError(f"Erro no parser: tem que ser inteiro no começo da expressao")
         
-        resultado = Parser.lexer.next.value
+        resultado = int(Parser.lexer.next.value)
         
         Parser.lexer.select_next()
 
@@ -57,9 +61,9 @@ class Parser:
                 raise ValueError(f"Erro no parser: tem que ser inteiro depois do operador")
             
             if operador == "PLUS":
-                resultado += Parser.lexer.next.value
+                resultado += int(Parser.lexer.next.value)
             elif operador == "MINUS":
-                resultado -= Parser.lexer.next.value
+                resultado -= int(Parser.lexer.next.value)
                 
             Parser.lexer.select_next()
             
@@ -79,7 +83,7 @@ class Parser:
     
 
 def main():
-    escrita_user = sys.argv[1]
+    escrita_user = " ".join(sys.argv[1:])
     resultado = Parser.run(escrita_user)
     print(resultado)
 
