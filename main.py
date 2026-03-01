@@ -38,7 +38,7 @@ class Lexer:
             self.next = Token("INT", int(num_str))
             
         else:
-            raise ValueError(f"Simbolo invalido no lexer")
+            raise ValueError(f"[lexer] Simbolo invalido no lexer")
 
 
 class Parser:
@@ -46,7 +46,7 @@ class Parser:
 
     def parse_expression():
         if Parser.lexer.next.type != "INT":
-            raise ValueError(f"Erro no parser: tem que ser inteiro no começo da expressao")
+            raise ValueError(f"[parser] Erro no parser: tem que ser inteiro no começo da expressao")
         
         resultado = int(Parser.lexer.next.value)
         
@@ -58,7 +58,7 @@ class Parser:
             Parser.lexer.select_next()
             
             if Parser.lexer.next.type != "INT":
-                raise ValueError(f"Erro no parser: tem que ser inteiro depois do operador")
+                raise ValueError(f"[parser] Erro no parser: tem que ser inteiro depois do operador")
             
             if operador == "PLUS":
                 resultado += int(Parser.lexer.next.value)
@@ -77,7 +77,7 @@ class Parser:
         resultado_final = Parser.parse_expression()
         
         if Parser.lexer.next.type != "EOF":
-             raise ValueError(f"Erro no parser: tem que ser EOF no final da expressao")
+             raise ValueError(f"[parser] Erro no parser: tem que ser EOF no final da expressao")
              
         return resultado_final
     
