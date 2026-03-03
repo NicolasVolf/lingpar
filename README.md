@@ -6,4 +6,4 @@
 
 Diagrama sintático que define a gramática das expressões matemáticas suportadas por este projeto:
 
-![Diagrama Sintático da Expressão](img_mandar.png)
+![Diagrama Sintático da Expressão](imgcomp.png)

@@ -31,6 +31,18 @@ class Lexer:
         elif char == '^':
             self.next = Token("XOR", "^")
             self.position += 1
+        elif char == '*':
+            self.next = Token("MUL", "*")
+            self.position += 1
+        elif char == '/':
+            self.next = Token("DIV", "/")
+            self.position += 1
+        elif char == '(':
+            self.next = Token("OPEN_PAR", "(")
+            self.position += 1
+        elif char == ')':
+            self.next = Token("CLOSE_PAR", ")")
+            self.position += 1
             
         elif char.isdigit():
             num_str = char
@@ -47,13 +59,8 @@ class Lexer:
 class Parser:
     lexer = None
 
-    def parse_expression():
-        if Parser.lexer.next.type != "INT":
-            raise ValueError(f"[parser] Erro no parser: tem que ser inteiro no começo da expressao")
-        
-        resultado = int(Parser.lexer.next.value)
-        
-        Parser.lexer.select_next()
+    def parse_expression():   
+        resultado = Parser.parse_term()
 
         while Parser.lexer.next.type == "PLUS" or Parser.lexer.next.type == "MINUS" or Parser.lexer.next.type == "XOR":
             operador = Parser.lexer.next.type
@@ -64,15 +71,57 @@ class Parser:
                 raise ValueError(f"[parser] Erro no parser: tem que ser inteiro depois do operador")
             
             if operador == "PLUS":
-                resultado += int(Parser.lexer.next.value)
+                resultado += Parser.parse_term()
             elif operador == "MINUS":
-                resultado -= int(Parser.lexer.next.value)
+                resultado -= Parser.parse_term()
             elif operador == "XOR":
-                resultado ^= int(Parser.lexer.next.value)
-                
-            Parser.lexer.select_next()
+                resultado ^= Parser.parse_term()
             
         return resultado
+    
+    def parse_term():
+        resultado = Parser.parse_factor()
+
+        while Parser.lexer.next.type == "MUL" or Parser.lexer.next.type == "DIV":
+            operador = Parser.lexer.next.type
+            
+            Parser.lexer.select_next()
+            
+            if Parser.lexer.next.type != "INT":
+                raise ValueError(f"[parser] Erro no parser: tem que ser inteiro depois do operador")
+            
+            if operador == "MUL":
+                resultado *= Parser.parse_factor()
+            elif operador == "DIV":
+                resultado //= Parser.parse_factor()
+        
+        return resultado
+
+    def parse_factor():
+        if Parser.lexer.next.type == "INT":
+            resultado = Parser.lexer.next.value
+            Parser.lexer.select_next()
+            return resultado
+        
+        elif Parser.lexer.next.type == "PLUS":
+            Parser.lexer.select_next()
+            return +Parser.parse_factor()
+        
+        elif Parser.lexer.next.type == "MINUS":
+            Parser.lexer.select_next()
+            return -Parser.parse_factor()
+        
+        elif Parser.lexer.next.type == "OPEN_PAR":
+            Parser.lexer.select_next()
+            resultado = Parser.parse_expression()
+            if Parser.lexer.next.type != "CLOSE_PAR":
+                raise ValueError(f"[parser] Erro no parser: fechamento de parenteses esperado")
+            Parser.lexer.select_next()
+            return resultado
+        
+        else:
+            raise ValueError(f"[parser] Erro no parser: token inválido em parse_factor")
+    
 
     def run(code):
         Parser.lexer = Lexer(code)
