@@ -67,9 +67,6 @@ class Parser:
             
             Parser.lexer.select_next()
             
-            if Parser.lexer.next.type != "INT":
-                raise ValueError(f"[parser] Erro no parser: tem que ser inteiro depois do operador")
-            
             if operador == "PLUS":
                 resultado += Parser.parse_term()
             elif operador == "MINUS":
@@ -86,9 +83,6 @@ class Parser:
             operador = Parser.lexer.next.type
             
             Parser.lexer.select_next()
-            
-            if Parser.lexer.next.type != "INT":
-                raise ValueError(f"[parser] Erro no parser: tem que ser inteiro depois do operador")
             
             if operador == "MUL":
                 resultado *= Parser.parse_factor()
