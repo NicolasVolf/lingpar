@@ -32,8 +32,12 @@ class Lexer:
             self.next = Token("XOR", "^")
             self.position += 1
         elif char == '*':
-            self.next = Token("MUL", "*")
-            self.position += 1
+            if self.position + 1 < len(self.source) and self.source[self.position + 1] == '*':
+                self.next = Token("POWER", "**")
+                self.position += 2
+            else:
+                self.next = Token("MUL", "*")
+                self.position += 1
         elif char == '/':
             self.next = Token("DIV", "/")
             self.position += 1
@@ -92,12 +96,7 @@ class Parser:
         return resultado
 
     def parse_factor():
-        if Parser.lexer.next.type == "INT":
-            resultado = Parser.lexer.next.value
-            Parser.lexer.select_next()
-            return resultado
-        
-        elif Parser.lexer.next.type == "PLUS":
+        if Parser.lexer.next.type == "PLUS":
             Parser.lexer.select_next()
             return +Parser.parse_factor()
         
@@ -105,16 +104,25 @@ class Parser:
             Parser.lexer.select_next()
             return -Parser.parse_factor()
         
+        if Parser.lexer.next.type == "INT":
+            resultado = Parser.lexer.next.value
+            Parser.lexer.select_next()
+        
         elif Parser.lexer.next.type == "OPEN_PAR":
             Parser.lexer.select_next()
             resultado = Parser.parse_expression()
             if Parser.lexer.next.type != "CLOSE_PAR":
                 raise ValueError(f"[parser] Erro no parser: fechamento de parenteses esperado")
             Parser.lexer.select_next()
-            return resultado
         
         else:
             raise ValueError(f"[parser] Erro no parser: token inválido em parse_factor")
+        
+        if Parser.lexer.next.type == "POWER":
+            Parser.lexer.select_next()
+            resultado **= Parser.parse_factor()
+        
+        return resultado
     
 
     def run(code):
