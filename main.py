@@ -16,16 +16,16 @@ class Node:
 
 
 class IntVal(Node):
-    def __init__(self, value):
-        super().__init__(value, [])
+    def __init__(self, value, children):
+        super().__init__(value, children)
 
     def evaluate(self):
         return self.value
 
 
 class UnOp(Node):
-    def __init__(self, value, child):
-        super().__init__(value, [child])
+    def __init__(self, value, children):
+        super().__init__(value, children)
 
     def evaluate(self):
         if len(self.children) != 1:
@@ -42,8 +42,8 @@ class UnOp(Node):
 
 
 class BinOp(Node):
-    def __init__(self, value, left_child, right_child):
-        super().__init__(value, [left_child, right_child])
+    def __init__(self, value, children):
+        super().__init__(value, children)
 
     def evaluate(self):
         if len(self.children) != 2:
@@ -134,11 +134,11 @@ class Parser:
             Parser.lexer.select_next()
             
             if operador == "PLUS":
-                resultado = BinOp("+", resultado, Parser.parse_term())
+                resultado = BinOp("+", [resultado, Parser.parse_term()])
             elif operador == "MINUS":
-                resultado = BinOp("-", resultado, Parser.parse_term())
+                resultado = BinOp("-", [resultado, Parser.parse_term()])
             elif operador == "XOR":
-                resultado = BinOp("^", resultado, Parser.parse_term())
+                resultado = BinOp("^", [resultado, Parser.parse_term()])
             
         return resultado
     
@@ -151,9 +151,9 @@ class Parser:
             Parser.lexer.select_next()
             
             if operador == "MUL":
-                resultado = BinOp("*", resultado, Parser.parse_factor())
+                resultado = BinOp("*", [resultado, Parser.parse_factor()])
             elif operador == "DIV":
-                resultado = BinOp("/", resultado, Parser.parse_factor())
+                resultado = BinOp("/", [resultado, Parser.parse_factor()])
         
         return resultado
 
@@ -161,15 +161,15 @@ class Parser:
         if Parser.lexer.next.type == "INT":
             resultado = Parser.lexer.next.value
             Parser.lexer.select_next()
-            return IntVal(resultado)
+            return IntVal(resultado, [])
         
         elif Parser.lexer.next.type == "PLUS":
             Parser.lexer.select_next()
-            return UnOp("+", Parser.parse_factor())
+            return UnOp("+", [Parser.parse_factor()])
         
         elif Parser.lexer.next.type == "MINUS":
             Parser.lexer.select_next()
-            return UnOp("-", Parser.parse_factor())
+            return UnOp("-", [Parser.parse_factor()])
         
         if Parser.lexer.next.type == "INT":
             resultado = Parser.lexer.next.value
