@@ -171,16 +171,13 @@ class Parser:
             Parser.lexer.select_next()
             return UnOp("-", [Parser.parse_factor()])
         
-        if Parser.lexer.next.type == "INT":
-            resultado = Parser.lexer.next.value
-            Parser.lexer.select_next()
-        
         elif Parser.lexer.next.type == "OPEN_PAR":
             Parser.lexer.select_next()
             resultado = Parser.parse_expression()
             if Parser.lexer.next.type != "CLOSE_PAR":
                 raise ValueError("[parser] Erro no parser: fechamento de parenteses esperado")
             Parser.lexer.select_next()
+            return resultado
         
         else:
             raise ValueError("[parser] Erro no parser: token inválido em parse_factor")
