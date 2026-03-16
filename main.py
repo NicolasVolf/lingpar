@@ -6,6 +6,68 @@ class Token:
         self.value = value   
 
 
+class Node:
+    def __init__(self, value, children=None):
+        self.value = value
+        self.children = children if children is not None else []
+
+    def evaluate(self):
+        pass
+
+
+class IntVal(Node):
+    def __init__(self, value):
+        super().__init__(value, [])
+
+    def evaluate(self):
+        return self.value
+
+
+class UnOp(Node):
+    def __init__(self, value, child):
+        super().__init__(value, [child])
+
+    def evaluate(self):
+        if len(self.children) != 1:
+            raise ValueError("[Semantic] UnOp deve conter exatamente 1 filho")
+
+        child_value = self.children[0].evaluate()
+
+        if self.value == "+":
+            return +child_value
+        if self.value == "-":
+            return -child_value
+
+        raise ValueError("[Semantic] Operador unario invalido")
+
+
+class BinOp(Node):
+    def __init__(self, value, left_child, right_child):
+        super().__init__(value, [left_child, right_child])
+
+    def evaluate(self):
+        if len(self.children) != 2:
+            raise ValueError("[Semantic] BinOp deve conter exatamente 2 filhos")
+
+        left_value = self.children[0].evaluate()
+        right_value = self.children[1].evaluate()
+
+        if self.value == "+":
+            return left_value + right_value
+        if self.value == "-":
+            return left_value - right_value
+        if self.value == "*":
+            return left_value * right_value
+        if self.value == "/":
+            if right_value == 0:
+                raise ValueError("[Semantic] Divisao por zero")
+            return left_value // right_value
+        if self.value == "^":
+            return left_value ^ right_value
+
+        raise ValueError("[Semantic] Operador binario invalido")
+
+
 class Lexer:
     def __init__(self, source):
         self.source = source
@@ -57,7 +119,7 @@ class Lexer:
             self.next = Token("INT", int(num_str))
             
         else:
-            raise ValueError(f"[lexer] Simbolo invalido no lexer")
+            raise ValueError("[lexer] Simbolo invalido no lexer")
 
 
 class Parser:
@@ -72,11 +134,11 @@ class Parser:
             Parser.lexer.select_next()
             
             if operador == "PLUS":
-                resultado += Parser.parse_term()
+                resultado = BinOp("+", resultado, Parser.parse_term())
             elif operador == "MINUS":
-                resultado -= Parser.parse_term()
+                resultado = BinOp("-", resultado, Parser.parse_term())
             elif operador == "XOR":
-                resultado ^= Parser.parse_term()
+                resultado = BinOp("^", resultado, Parser.parse_term())
             
         return resultado
     
@@ -89,20 +151,25 @@ class Parser:
             Parser.lexer.select_next()
             
             if operador == "MUL":
-                resultado *= Parser.parse_factor()
+                resultado = BinOp("*", resultado, Parser.parse_factor())
             elif operador == "DIV":
-                resultado //= Parser.parse_factor()
+                resultado = BinOp("/", resultado, Parser.parse_factor())
         
         return resultado
 
     def parse_factor():
-        if Parser.lexer.next.type == "PLUS":
+        if Parser.lexer.next.type == "INT":
+            resultado = Parser.lexer.next.value
             Parser.lexer.select_next()
-            return +Parser.parse_factor()
+            return IntVal(resultado)
+        
+        elif Parser.lexer.next.type == "PLUS":
+            Parser.lexer.select_next()
+            return UnOp("+", Parser.parse_factor())
         
         elif Parser.lexer.next.type == "MINUS":
             Parser.lexer.select_next()
-            return -Parser.parse_factor()
+            return UnOp("-", Parser.parse_factor())
         
         if Parser.lexer.next.type == "INT":
             resultado = Parser.lexer.next.value
@@ -112,17 +179,11 @@ class Parser:
             Parser.lexer.select_next()
             resultado = Parser.parse_expression()
             if Parser.lexer.next.type != "CLOSE_PAR":
-                raise ValueError(f"[parser] Erro no parser: fechamento de parenteses esperado")
+                raise ValueError("[parser] Erro no parser: fechamento de parenteses esperado")
             Parser.lexer.select_next()
         
         else:
-            raise ValueError(f"[parser] Erro no parser: token inválido em parse_factor")
-        
-        if Parser.lexer.next.type == "POWER":
-            Parser.lexer.select_next()
-            resultado **= Parser.parse_factor()
-        
-        return resultado
+            raise ValueError("[parser] Erro no parser: token inválido em parse_factor")
     
 
     def run(code):
@@ -133,14 +194,15 @@ class Parser:
         resultado_final = Parser.parse_expression()
         
         if Parser.lexer.next.type != "EOF":
-             raise ValueError(f"[parser] Erro no parser: tem que ser EOF no final da expressao")
+               raise ValueError("[parser] Erro no parser: tem que ser EOF no final da expressao")
              
         return resultado_final
     
 
 def main():
     escrita_user = " ".join(sys.argv[1:])
-    resultado = Parser.run(escrita_user)
+    raiz = Parser.run(escrita_user)
+    resultado = raiz.evaluate()
     print(resultado)
 
 if __name__ == "__main__":    
