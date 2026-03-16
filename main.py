@@ -37,6 +37,14 @@ class UnOp(Node):
             return +child_value
         if self.value == "-":
             return -child_value
+        if self.value == "!":
+            if child_value < 0:
+                raise ValueError("[Semantic] Fatorial de numero negativo nao e permitido")
+
+            resultado = 1
+            for numero in range(2, child_value + 1):
+                resultado *= numero
+            return resultado
 
         raise ValueError("[Semantic] Operador unario invalido")
 
@@ -103,6 +111,9 @@ class Lexer:
         elif char == '/':
             self.next = Token("DIV", "/")
             self.position += 1
+        elif char == '!':
+            self.next = Token("FACT", "!")
+            self.position += 1
         elif char == '(':
             self.next = Token("OPEN_PAR", "(")
             self.position += 1
@@ -158,29 +169,31 @@ class Parser:
         return resultado
 
     def parse_factor():
-        if Parser.lexer.next.type == "INT":
-            resultado = Parser.lexer.next.value
-            Parser.lexer.select_next()
-            return IntVal(resultado, [])
-        
-        elif Parser.lexer.next.type == "PLUS":
+        if Parser.lexer.next.type == "PLUS":
             Parser.lexer.select_next()
             return UnOp("+", [Parser.parse_factor()])
         
         elif Parser.lexer.next.type == "MINUS":
             Parser.lexer.select_next()
             return UnOp("-", [Parser.parse_factor()])
-        
+
+        if Parser.lexer.next.type == "INT":
+            resultado = IntVal(Parser.lexer.next.value, [])
+            Parser.lexer.select_next()
         elif Parser.lexer.next.type == "OPEN_PAR":
             Parser.lexer.select_next()
             resultado = Parser.parse_expression()
             if Parser.lexer.next.type != "CLOSE_PAR":
                 raise ValueError("[parser] Erro no parser: fechamento de parenteses esperado")
             Parser.lexer.select_next()
-            return resultado
-        
         else:
             raise ValueError("[parser] Erro no parser: token inválido em parse_factor")
+
+        while Parser.lexer.next.type == "FACT":
+            Parser.lexer.select_next()
+            resultado = UnOp("!", [resultado])
+
+        return resultado
     
 
     def run(code):
