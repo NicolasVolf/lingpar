@@ -6,14 +6,18 @@
 
 Diagrama sintático que define a gramática das expressões matemáticas suportadas por este projeto:
 
-![Diagrama Sintático da Expressão](imgcomp.png)
+![Diagrama Sintático da Expressão](Screenshot_4.png)
 
 ```ebnf
 
+PROGRAM = { STATEMENT } ;
+STATEMENT = ((IDENTIFIER, "=", EXPRESSION) | (PRINT, "(", EXPRESSION, ")") | ε), EOL ;
 EXPRESSION = TERM, { ("+" | "-"), TERM } ;
 TERM = FACTOR, { ("*" | "/"), FACTOR } ;
 FACTOR = ("+" | "-"), FACTOR | "(", EXPRESSION, ")" | NUMBER ;
 NUMBER = DIGIT, {DIGIT} ;
 DIGIT = 0 | 1 | ... | 9 ;
+IDENTIFIER = LETTER, {LETTER | DIGIT | "_"} ;
+LETTER = a | b | ... | z | A | B | ... | Z ;
 
 ```
