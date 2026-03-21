@@ -15,43 +15,23 @@ class Variable:
 
 class SymbolTable:
     def __init__(self):
-        self._table: Dict[str, Variable] = {}
+        self.table: Dict[str, Variable] = {}
 
-    @property
-    def table(self):
-        return self._table
-
-    @table.setter
-    def table(self, new_table):
-        if not isinstance(new_table, dict):
-            raise ValueError("[Semantic] table deve ser um dicionario")
-
-        for key, value in new_table.items():
-            if not isinstance(key, str):
-                raise ValueError("[Semantic] Nome de variavel deve ser string")
-            if not isinstance(value, Variable):
-                raise ValueError("[Semantic] Valor da tabela deve ser do tipo Variable")
-
-        self._table = new_table
-
-    def get_variable(self, name: str):
+    def get_value(self, name: str):
         if not isinstance(name, str):
             raise ValueError("[Semantic] Nome de variavel deve ser string")
-        if name not in self._table:
+        if name not in self.table:
             raise ValueError("[Semantic] Variavel nao existe")
 
-        return self._table[name]
+        return self.table[name].value
 
-    def set_variable(self, name: str, value: int):
+    def set_value(self, name: str, value: int):
         if not isinstance(name, str):
             raise ValueError("[Semantic] Nome de variavel deve ser string")
         if not isinstance(value, int):
             raise ValueError("[Semantic] Valor da variavel deve ser int")
 
-        self._table[name] = Variable(value)
-
-    def get_value(self, name: str):
-        return self.get_variable(name).value
+        self.table[name] = Variable(value)
 
 
 class Node:
@@ -147,7 +127,7 @@ class Assignment(Node):
 
         variable_name = self.children[0].value
         assigned_value = self.children[1].evaluate(st)
-        st.set_variable(variable_name, assigned_value)
+        st.set_value(variable_name, assigned_value)
 
 
 class Block(Node):
