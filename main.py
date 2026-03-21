@@ -212,10 +212,6 @@ class Lexer:
                 num_str += self.source[self.position]
                 self.position += 1
 
-            if self.position < len(self.source) and (self.source[self.position].isalpha() or self.source[self.position] == "_"):
-                raise ValueError("[lexer] Identificador invalido")
-
-
             self.next = Token("INT", int(num_str))
 
         elif char.isalpha():
