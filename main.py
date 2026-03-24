@@ -9,8 +9,9 @@ class Token:
 
 
 class Variable:
-    def __init__(self, value: int):
+    def __init__(self, value: int, mutable: bool = True):
         self.value = value
+        self.mutable = mutable
 
 
 class SymbolTable:
@@ -25,13 +26,30 @@ class SymbolTable:
 
         return self.table[name].value
 
-    def set_value(self, name: str, value: int):
+    def assign_value(self, name: str, value: int):
         if not isinstance(name, str):
             raise ValueError("[Semantic] Nome de variavel deve ser string")
         if not isinstance(value, int):
             raise ValueError("[Semantic] Valor da variavel deve ser int")
 
-        self.table[name] = Variable(value)
+        if name in self.table and not self.table[name].mutable:
+            raise ValueError(f"[Semantic] Nao pode alterar o valor da variavel imutavel '{name}'")
+
+        if name not in self.table:
+            self.table[name] = Variable(value, mutable=True)
+            return
+
+        self.table[name].value = value
+
+    def declare_immutable(self, name: str, value: int):
+        if not isinstance(name, str):
+            raise ValueError("[Semantic] Nome de variavel deve ser string")
+        if not isinstance(value, int):
+            raise ValueError("[Semantic] Valor da variavel deve ser int")
+        if name in self.table:
+            raise ValueError(f"[Semantic] Variavel '{name}' ja foi declarada")
+
+        self.table[name] = Variable(value, mutable=False)
 
 
 class Node:
@@ -127,7 +145,22 @@ class Assignment(Node):
 
         variable_name = self.children[0].value
         assigned_value = self.children[1].evaluate(st)
-        st.set_value(variable_name, assigned_value)
+        st.assign_value(variable_name, assigned_value)
+
+
+class ImmutableDeclaration(Node):
+    def __init__(self, value, children):
+        super().__init__(value, children)
+
+    def evaluate(self, st):
+        if len(self.children) != 2:
+            raise ValueError("[Semantic] Declaracao imutavel deve conter exatamente 2 filhos")
+        if not isinstance(self.children[0], Identifier):
+            raise ValueError("[Semantic] Primeiro filho da declaracao imutavel deve ser Identifier")
+
+        variable_name = self.children[0].value
+        assigned_value = self.children[1].evaluate(st)
+        st.declare_immutable(variable_name, assigned_value)
 
 
 class Block(Node):
@@ -150,12 +183,52 @@ class NoOp(Node):
 class PrePro:
     @staticmethod
     def filter(source_code):
-        return re.sub(r"//[^\n]*", "", source_code)
+        no_comments = re.sub(r"//[^\n]*", "", source_code)
+        return PrePro.process_constants(no_comments)
+
+    @staticmethod
+    def process_constants(source_code):
+        constants: Dict[str, str] = {}
+        processed_lines = []
+        const_pattern = re.compile(r"^\s*const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*;\s*$")
+
+        for raw_line in source_code.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                processed_lines.append(raw_line)
+                continue
+
+            const_match = const_pattern.match(raw_line)
+            if const_match:
+                const_name = const_match.group(1)
+                const_expr = const_match.group(2)
+
+                if const_name in constants:
+                    raise ValueError(f"[PrePro] Constante '{const_name}' ja foi declarada")
+
+                resolved_expr = const_expr
+                for name, value in constants.items():
+                    resolved_expr = re.sub(rf"\b{re.escape(name)}\b", str(value), resolved_expr)
+
+                constants[const_name] = f"({resolved_expr})"
+                continue
+
+            processed_lines.append(raw_line)
+
+        processed_code = "\n".join(processed_lines)
+        for name, value in constants.items():
+            processed_code = re.sub(rf"\b{re.escape(name)}\b", str(value), processed_code)
+
+        if source_code.endswith("\n"):
+            processed_code += "\n"
+
+        return processed_code
 
 
 class Lexer:
     RESERVED_WORDS = {
-        "println!": "PRINT"
+        "println!": "PRINT",
+        "let": "LET",
     }
 
     def __init__(self, source):
@@ -246,6 +319,28 @@ class Parser:
         return Block("BLOCK", instructions)
 
     def parse_statement():
+        if Parser.lexer.next.type == "LET":
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "IDEN":
+                raise ValueError("[parser] Erro no parser: identificador esperado apos let")
+
+            identifier_name = Parser.lexer.next.value
+            identifier_node = Identifier(identifier_name, [])
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "ASSIGN":
+                raise ValueError("[parser] Erro no parser: '=' esperado em declaracao let")
+            Parser.lexer.select_next()
+
+            expression_node = Parser.parse_expression()
+
+            if Parser.lexer.next.type != "END":
+                raise ValueError("[parser] Erro no parser: ';' esperado")
+            Parser.lexer.select_next()
+
+            return ImmutableDeclaration("LET", [identifier_node, expression_node])
+
         if Parser.lexer.next.type == "IDEN":
             identifier_name = Parser.lexer.next.value
             identifier_node = Identifier(identifier_name, [])
