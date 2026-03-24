@@ -191,6 +191,7 @@ class PrePro:
         constants: Dict[str, str] = {}
         processed_lines = []
         const_pattern = re.compile(r"^\s*const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*;\s*$")
+        define_pattern = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(.+?)\s*$")
 
         for raw_line in source_code.splitlines():
             stripped = raw_line.strip()
@@ -199,9 +200,25 @@ class PrePro:
                 continue
 
             const_match = const_pattern.match(raw_line)
+            define_match = define_pattern.match(raw_line)
+
             if const_match:
                 const_name = const_match.group(1)
                 const_expr = const_match.group(2)
+
+                if const_name in constants:
+                    raise ValueError(f"[PrePro] Constante '{const_name}' ja foi declarada")
+
+                resolved_expr = const_expr
+                for name, value in constants.items():
+                    resolved_expr = re.sub(rf"\b{re.escape(name)}\b", str(value), resolved_expr)
+
+                constants[const_name] = f"({resolved_expr})"
+                continue
+
+            if define_match:
+                const_name = define_match.group(1)
+                const_expr = define_match.group(2)
 
                 if const_name in constants:
                     raise ValueError(f"[PrePro] Constante '{const_name}' ja foi declarada")
