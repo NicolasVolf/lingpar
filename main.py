@@ -262,6 +262,9 @@ class Parser:
     def parse_statement():
         tok = Parser.lexer.next
 
+        if tok.type == "OPEN_BRA":
+            return Parser.parse_block()
+
         if tok.type == "IDEN":
             name = tok.value
             ident_node = Identifier(name, [])
@@ -338,7 +341,7 @@ class Parser:
 
         if tok.type == "END":
             Parser.lexer.select_next()
-            return NoOp()
+            return NoOp("NOOP", [])
 
         raise ValueError(f"[Parser] Instrucao invalida, token: {tok.type} = '{tok.value}'")
 
@@ -418,6 +421,15 @@ class Parser:
 
         if tok.type == "READ":
             Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "OPEN_PAR":
+                raise ValueError("[Parser] '(' esperado apos scanln!")
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "CLOSE_PAR":
+                raise ValueError("[Parser] ')' esperado em scanln!")
+            Parser.lexer.select_next()
+
             return Read("READ", [])
 
         if tok.type == "OPEN_PAR":
