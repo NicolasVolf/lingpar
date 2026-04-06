@@ -1,4 +1,3 @@
-// Bloco de instrucoes valido
 x = 10;
 y = 2;
 z = (x + y) * 3;
