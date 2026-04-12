@@ -43,6 +43,7 @@ class SymbolTable:
             isinstance(value, Variable)
             and value.type == var_type
             and ((var_type == "i32" and type(value.value) is int)
+                 or (var_type == "f64" and type(value.value) is float)
                  or (var_type == "bool" and type(value.value) is bool)
                  or (var_type == "str" and type(value.value) is str))
         )
@@ -64,6 +65,7 @@ class SymbolTable:
             isinstance(value, Variable)
             and value.type == variable.type
             and ((variable.type == "i32" and type(value.value) is int)
+                 or (variable.type == "f64" and type(value.value) is float)
                  or (variable.type == "bool" and type(value.value) is bool)
                  or (variable.type == "str" and type(value.value) is str))
         )
@@ -94,6 +96,11 @@ class BoolVal(Node):
         return Variable(self.value, "bool")
 
 
+class FloatVal(Node):
+    def evaluate(self, st):
+        return Variable(self.value, "f64")
+
+
 class StringVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "str")
@@ -108,18 +115,40 @@ class UnOp(Node):
     def evaluate(self, st):
         child_val = self.children[0].evaluate(st)
         if self.value == "+":
-            if child_val.type != "i32":
-                raise ValueError("[Semantic] Operador '+' unario exige i32")
-            return Variable(+child_val.value, "i32")
+            if child_val.type not in ("i32", "f64"):
+                raise ValueError("[Semantic] Operador '+' unario exige i32 ou f64")
+            return Variable(+child_val.value, child_val.type)
         if self.value == "-":
-            if child_val.type != "i32":
-                raise ValueError("[Semantic] Operador '-' unario exige i32")
-            return Variable(-child_val.value, "i32")
+            if child_val.type not in ("i32", "f64"):
+                raise ValueError("[Semantic] Operador '-' unario exige i32 ou f64")
+            return Variable(-child_val.value, child_val.type)
         if self.value == "!":
             if child_val.type != "bool":
                 raise ValueError("[Semantic] Operador '!' exige bool")
             return Variable(not child_val.value, "bool")
         raise ValueError(f"[Semantic] Operador unario invalido: {self.value}")
+
+
+class Cast(Node):
+    def evaluate(self, st):
+        target_type = self.value
+        child_val = self.children[0].evaluate(st)
+
+        if target_type == "i32":
+            if child_val.type == "i32":
+                return child_val
+            if child_val.type == "f64":
+                return Variable(round(child_val.value), "i32")
+            raise ValueError("[Semantic] Cast para i32 exige i32 ou f64")
+
+        if target_type == "f64":
+            if child_val.type == "f64":
+                return child_val
+            if child_val.type == "i32":
+                return Variable(float(child_val.value), "f64")
+            raise ValueError("[Semantic] Cast para f64 exige i32 ou f64")
+
+        raise ValueError(f"[Semantic] Tipo de cast invalido: {target_type}")
 
 
 class BinOp(Node):
@@ -132,46 +161,61 @@ class BinOp(Node):
                 return "true" if var.value else "false"
             return str(var.value)
 
+        def both_numeric(a, b):
+            return a.type in ("i32", "f64") and b.type in ("i32", "f64")
+
+        def promoted_numeric_type(a, b):
+            if a.type == "f64" or b.type == "f64":
+                return "f64"
+            return "i32"
+
         if self.value == "+":
-            if left.type == "i32" and right.type == "i32":
-                return Variable(left.value + right.value, "i32")
+            if both_numeric(left, right):
+                result_type = promoted_numeric_type(left, right)
+                return Variable(left.value + right.value, result_type)
             if left.type == "str" or right.type == "str":
                 return Variable(stringify(left) + stringify(right), "str")
-            raise ValueError("[Semantic] Operador '+' exige i32+i32 ou concatenacao com str")
+            raise ValueError("[Semantic] Operador '+' exige numeros ou concatenacao com str")
         if self.value == "-":
-            if left.type == "i32" and right.type == "i32":
-                return Variable(left.value - right.value, "i32")
-            raise ValueError("[Semantic] Operador '-' exige i32")
+            if both_numeric(left, right):
+                result_type = promoted_numeric_type(left, right)
+                return Variable(left.value - right.value, result_type)
+            raise ValueError("[Semantic] Operador '-' exige i32 ou f64")
         if self.value == "*":
-            if left.type == "i32" and right.type == "i32":
-                return Variable(left.value * right.value, "i32")
-            raise ValueError("[Semantic] Operador '*' exige i32")
+            if both_numeric(left, right):
+                result_type = promoted_numeric_type(left, right)
+                return Variable(left.value * right.value, result_type)
+            raise ValueError("[Semantic] Operador '*' exige i32 ou f64")
         if self.value == "/":
-            if left.type != "i32" or right.type != "i32":
-                raise ValueError("[Semantic] Operador '/' exige i32")
+            if not both_numeric(left, right):
+                raise ValueError("[Semantic] Operador '/' exige i32 ou f64")
             if right.value == 0:
                 raise ValueError("[Semantic] Divisao por zero")
-            return Variable(left.value // right.value, "i32")
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value // right.value, "i32")
+            return Variable(left.value / right.value, "f64")
         if self.value == "^":
             if left.type == "i32" and right.type == "i32":
                 return Variable(left.value ^ right.value, "i32")
             raise ValueError("[Semantic] Operador '^' exige i32")
         if self.value == "==":
+            if both_numeric(left, right):
+                return Variable(left.value == right.value, "bool")
             if left.type != right.type:
                 raise ValueError("[Semantic] Operador '==' exige tipos iguais")
             return Variable(left.value == right.value, "bool")
         if self.value == ">":
-            if left.type == "i32" and right.type == "i32":
+            if both_numeric(left, right):
                 return Variable(left.value > right.value, "bool")
             if left.type == "str" and right.type == "str":
                 return Variable(left.value > right.value, "bool")
-            raise ValueError("[Semantic] Operador '>' exige i32 ou str")
+            raise ValueError("[Semantic] Operador '>' exige i32/f64 ou str")
         if self.value == "<":
-            if left.type == "i32" and right.type == "i32":
+            if both_numeric(left, right):
                 return Variable(left.value < right.value, "bool")
             if left.type == "str" and right.type == "str":
                 return Variable(left.value < right.value, "bool")
-            raise ValueError("[Semantic] Operador '<' exige i32 ou str")
+            raise ValueError("[Semantic] Operador '<' exige i32/f64 ou str")
         if self.value == "&&":
             if left.type == "bool" and right.type == "bool":
                 return Variable(left.value and right.value, "bool")
@@ -269,6 +313,7 @@ class Lexer:
         "false":    "BOOL",
         "str":      "TYPE",
         "i32":      "TYPE",
+        "f64":      "TYPE",
         "bool":     "TYPE",
     }
 
@@ -354,7 +399,17 @@ class Lexer:
             while self.position < len(self.source) and self.source[self.position].isdigit():
                 num += self.source[self.position]
                 self.position += 1
-            self.next = Token("INT", int(num))
+            if self.position < len(self.source) and self.source[self.position] == '.':
+                num += '.'
+                self.position += 1
+                if self.position >= len(self.source) or not self.source[self.position].isdigit():
+                    raise ValueError("[Lexer] Float invalido: digitos esperados apos '.'")
+                while self.position < len(self.source) and self.source[self.position].isdigit():
+                    num += self.source[self.position]
+                    self.position += 1
+                self.next = Token("FLOAT", float(num))
+            else:
+                self.next = Token("INT", int(num))
         elif char.isalpha() or char == '_':
             ident = char
             self.position += 1
@@ -587,9 +642,30 @@ class Parser:
     def parse_factor():
         tok = Parser.lexer.next
 
+        if tok.type == "OPEN_PAR":
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type == "TYPE" and Parser.lexer.next.value in ("i32", "f64"):
+                cast_type = Parser.lexer.next.value
+                Parser.lexer.select_next()
+                if Parser.lexer.next.type != "CLOSE_PAR":
+                    raise ValueError("[Parser] ')' esperado apos tipo de cast")
+                Parser.lexer.select_next()
+                return Cast(cast_type, [Parser.parse_factor()])
+
+            result = Parser.parse_bool_expression()
+            if Parser.lexer.next.type != "CLOSE_PAR":
+                raise ValueError("[Parser] ')' esperado para fechar parenteses")
+            Parser.lexer.select_next()
+            return result
+
         if tok.type == "INT":
             Parser.lexer.select_next()
             return IntVal(tok.value, [])
+
+        if tok.type == "FLOAT":
+            Parser.lexer.select_next()
+            return FloatVal(tok.value, [])
 
         if tok.type == "BOOL":
             Parser.lexer.select_next()
@@ -627,14 +703,6 @@ class Parser:
             Parser.lexer.select_next()
 
             return Read("READ", [])
-
-        if tok.type == "OPEN_PAR":
-            Parser.lexer.select_next()
-            result = Parser.parse_bool_expression()
-            if Parser.lexer.next.type != "CLOSE_PAR":
-                raise ValueError("[Parser] ')' esperado para fechar parenteses")
-            Parser.lexer.select_next()
-            return result
 
         raise ValueError(f"[Parser] Token invalido em parse_factor: {tok.type} = '{tok.value}'")
 
