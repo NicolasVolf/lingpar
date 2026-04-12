@@ -26,32 +26,27 @@ class SymbolTable:
         var = self.table[name]
         return Variable(var.value, var.type)
 
-    def _check_type(self, variable, var_type: str):
-        if not isinstance(variable, Variable):
-            return False
-        if var_type == "i32":
-            return variable.type == "i32" and type(variable.value) is int
-        if var_type == "bool":
-            return variable.type == "bool" and type(variable.value) is bool
-        if var_type == "str":
-            return variable.type == "str" and type(variable.value) is str
-        raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
-
-    def _default_value_for_type(self, var_type: str):
-        if var_type == "i32":
-            return Variable(0, "i32")
-        if var_type == "bool":
-            return Variable(False, "bool")
-        if var_type == "str":
-            return Variable("", "str")
-        raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
-
     def create_variable(self, name: str, value, var_type: str, is_mutable: bool = False):
         if name in self.table:
             raise ValueError(f"[Semantic] Variavel '{name}' ja foi declarada")
         if value is None:
-            value = self._default_value_for_type(var_type)
-        if not self._check_type(value, var_type):
+            if var_type == "i32":
+                value = Variable(0, "i32")
+            elif var_type == "bool":
+                value = Variable(False, "bool")
+            elif var_type == "str":
+                value = Variable("", "str")
+            else:
+                raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
+
+        is_valid_type = (
+            isinstance(value, Variable)
+            and value.type == var_type
+            and ((var_type == "i32" and type(value.value) is int)
+                 or (var_type == "bool" and type(value.value) is bool)
+                 or (var_type == "str" and type(value.value) is str))
+        )
+        if not is_valid_type:
             raise ValueError(
                 f"[Semantic] Tipo invalido para '{name}': esperado {var_type}, recebido {value.type}"
             )
@@ -65,7 +60,14 @@ class SymbolTable:
         if not variable.is_mutable:
             raise ValueError(f"[Semantic] Variavel '{name}' nao e mutavel")
 
-        if not self._check_type(value, variable.type):
+        is_valid_type = (
+            isinstance(value, Variable)
+            and value.type == variable.type
+            and ((variable.type == "i32" and type(value.value) is int)
+                 or (variable.type == "bool" and type(value.value) is bool)
+                 or (variable.type == "str" and type(value.value) is str))
+        )
+        if not is_valid_type:
             raise ValueError(
                 f"[Semantic] Tipo invalido para '{name}': esperado {variable.type}, recebido {value.type}"
             )
@@ -92,7 +94,7 @@ class BoolVal(Node):
         return Variable(self.value, "bool")
 
 
-class StrVal(Node):
+class StringVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "str")
 
@@ -184,16 +186,13 @@ class Assignment(Node):
 
 
 class VarDec(Node):
-    def __init__(self, value, children=None, is_mutable: bool = False):
-        super().__init__(value, children)
-        self.is_mutable = is_mutable
-
     def evaluate(self, st):
         var_name = self.children[0].value
         value = None
         if len(self.children) == 2:
             value = self.children[1].evaluate(st)
-        st.create_variable(var_name, value, self.value, self.is_mutable)
+        is_mutable = getattr(self, "is_mutable", False)
+        st.create_variable(var_name, value, self.value, is_mutable)
 
 
 class Block(Node):
@@ -436,7 +435,9 @@ class Parser:
                 raise ValueError("[Parser] ';' esperado no final da declaracao")
             Parser.lexer.select_next()
 
-            return VarDec(type_node.value, children, is_mutable)
+            vardec_node = VarDec(type_node.value, children)
+            vardec_node.is_mutable = is_mutable
+            return vardec_node
 
         if tok.type == "IDEN":
             name = tok.value
@@ -582,7 +583,7 @@ class Parser:
 
         if tok.type == "STR":
             Parser.lexer.select_next()
-            return StrVal(tok.value, [])
+            return StringVal(tok.value, [])
 
         if tok.type == "IDEN":
             Parser.lexer.select_next()
