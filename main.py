@@ -126,12 +126,18 @@ class BinOp(Node):
     def evaluate(self, st):
         left  = self.children[0].evaluate(st)
         right = self.children[1].evaluate(st)
+
+        def stringify(var):
+            if var.type == "bool":
+                return "true" if var.value else "false"
+            return str(var.value)
+
         if self.value == "+":
             if left.type == "i32" and right.type == "i32":
                 return Variable(left.value + right.value, "i32")
-            if left.type == "str" and right.type == "str":
-                return Variable(left.value + right.value, "str")
-            raise ValueError("[Semantic] Operador '+' exige i32+i32 ou str+str")
+            if left.type == "str" or right.type == "str":
+                return Variable(stringify(left) + stringify(right), "str")
+            raise ValueError("[Semantic] Operador '+' exige i32+i32 ou concatenacao com str")
         if self.value == "-":
             if left.type == "i32" and right.type == "i32":
                 return Variable(left.value - right.value, "i32")
@@ -157,11 +163,15 @@ class BinOp(Node):
         if self.value == ">":
             if left.type == "i32" and right.type == "i32":
                 return Variable(left.value > right.value, "bool")
-            raise ValueError("[Semantic] Operador '>' exige i32")
+            if left.type == "str" and right.type == "str":
+                return Variable(left.value > right.value, "bool")
+            raise ValueError("[Semantic] Operador '>' exige i32 ou str")
         if self.value == "<":
             if left.type == "i32" and right.type == "i32":
                 return Variable(left.value < right.value, "bool")
-            raise ValueError("[Semantic] Operador '<' exige i32")
+            if left.type == "str" and right.type == "str":
+                return Variable(left.value < right.value, "bool")
+            raise ValueError("[Semantic] Operador '<' exige i32 ou str")
         if self.value == "&&":
             if left.type == "bool" and right.type == "bool":
                 return Variable(left.value and right.value, "bool")
@@ -175,7 +185,11 @@ class BinOp(Node):
 
 class Print(Node):
     def evaluate(self, st):
-        print(self.children[0].evaluate(st).value)
+        value = self.children[0].evaluate(st)
+        if value.type == "bool":
+            print("true" if value.value else "false")
+            return
+        print(value.value)
 
 
 class Assignment(Node):
