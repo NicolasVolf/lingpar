@@ -10,8 +10,10 @@ class Token:
 
 
 class Variable:
-    def __init__(self, value: int):
+    def __init__(self, value, var_type: str, is_mutable: bool = False):
         self.value = value
+        self.type = var_type
+        self.is_mutable = is_mutable
 
 
 class SymbolTable:
@@ -21,10 +23,54 @@ class SymbolTable:
     def get_value(self, name: str):
         if name not in self.table:
             raise ValueError(f"[Semantic] Variavel '{name}' nao existe")
-        return self.table[name].value
+        var = self.table[name]
+        return Variable(var.value, var.type)
 
-    def set_value(self, name: str, value: int):
-        self.table[name] = Variable(value)
+    def _check_type(self, variable, var_type: str):
+        if not isinstance(variable, Variable):
+            return False
+        if var_type == "i32":
+            return variable.type == "i32" and type(variable.value) is int
+        if var_type == "bool":
+            return variable.type == "bool" and type(variable.value) is bool
+        if var_type == "str":
+            return variable.type == "str" and type(variable.value) is str
+        raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
+
+    def _default_value_for_type(self, var_type: str):
+        if var_type == "i32":
+            return Variable(0, "i32")
+        if var_type == "bool":
+            return Variable(False, "bool")
+        if var_type == "str":
+            return Variable("", "str")
+        raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
+
+    def create_variable(self, name: str, value, var_type: str, is_mutable: bool = False):
+        if name in self.table:
+            raise ValueError(f"[Semantic] Variavel '{name}' ja foi declarada")
+        if value is None:
+            value = self._default_value_for_type(var_type)
+        if not self._check_type(value, var_type):
+            raise ValueError(
+                f"[Semantic] Tipo invalido para '{name}': esperado {var_type}, recebido {value.type}"
+            )
+        self.table[name] = Variable(value.value, var_type, is_mutable)
+
+    def set_value(self, name: str, value):
+        if name not in self.table:
+            raise ValueError(f"[Semantic] Variavel '{name}' nao foi declarada")
+
+        variable = self.table[name]
+        if not variable.is_mutable:
+            raise ValueError(f"[Semantic] Variavel '{name}' nao e mutavel")
+
+        if not self._check_type(value, variable.type):
+            raise ValueError(
+                f"[Semantic] Tipo invalido para '{name}': esperado {variable.type}, recebido {value.type}"
+            )
+
+        variable.value = value.value
 
 
 class Node:
@@ -38,7 +84,17 @@ class Node:
 
 class IntVal(Node):
     def evaluate(self, st):
-        return self.value
+        return Variable(self.value, "i32")
+
+
+class BoolVal(Node):
+    def evaluate(self, st):
+        return Variable(self.value, "bool")
+
+
+class StrVal(Node):
+    def evaluate(self, st):
+        return Variable(self.value, "str")
 
 
 class Identifier(Node):
@@ -50,11 +106,17 @@ class UnOp(Node):
     def evaluate(self, st):
         child_val = self.children[0].evaluate(st)
         if self.value == "+":
-            return +child_val
+            if child_val.type != "i32":
+                raise ValueError("[Semantic] Operador '+' unario exige i32")
+            return Variable(+child_val.value, "i32")
         if self.value == "-":
-            return -child_val
+            if child_val.type != "i32":
+                raise ValueError("[Semantic] Operador '-' unario exige i32")
+            return Variable(-child_val.value, "i32")
         if self.value == "!":
-            return 0 if child_val != 0 else 1
+            if child_val.type != "bool":
+                raise ValueError("[Semantic] Operador '!' exige bool")
+            return Variable(not child_val.value, "bool")
         raise ValueError(f"[Semantic] Operador unario invalido: {self.value}")
 
 
@@ -62,25 +124,56 @@ class BinOp(Node):
     def evaluate(self, st):
         left  = self.children[0].evaluate(st)
         right = self.children[1].evaluate(st)
-        if self.value == "+":  return left + right
-        if self.value == "-":  return left - right
-        if self.value == "*":  return left * right
+        if self.value == "+":
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value + right.value, "i32")
+            if left.type == "str" and right.type == "str":
+                return Variable(left.value + right.value, "str")
+            raise ValueError("[Semantic] Operador '+' exige i32+i32 ou str+str")
+        if self.value == "-":
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value - right.value, "i32")
+            raise ValueError("[Semantic] Operador '-' exige i32")
+        if self.value == "*":
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value * right.value, "i32")
+            raise ValueError("[Semantic] Operador '*' exige i32")
         if self.value == "/":
-            if right == 0:
+            if left.type != "i32" or right.type != "i32":
+                raise ValueError("[Semantic] Operador '/' exige i32")
+            if right.value == 0:
                 raise ValueError("[Semantic] Divisao por zero")
-            return left // right
-        if self.value == "^":  return left ^ right
-        if self.value == "==": return 1 if left == right else 0
-        if self.value == ">":  return 1 if left > right else 0
-        if self.value == "<":  return 1 if left < right else 0
-        if self.value == "&&": return 1 if (left != 0 and right != 0) else 0
-        if self.value == "||": return 1 if (left != 0 or right != 0) else 0
+            return Variable(left.value // right.value, "i32")
+        if self.value == "^":
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value ^ right.value, "i32")
+            raise ValueError("[Semantic] Operador '^' exige i32")
+        if self.value == "==":
+            if left.type != right.type:
+                raise ValueError("[Semantic] Operador '==' exige tipos iguais")
+            return Variable(left.value == right.value, "bool")
+        if self.value == ">":
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value > right.value, "bool")
+            raise ValueError("[Semantic] Operador '>' exige i32")
+        if self.value == "<":
+            if left.type == "i32" and right.type == "i32":
+                return Variable(left.value < right.value, "bool")
+            raise ValueError("[Semantic] Operador '<' exige i32")
+        if self.value == "&&":
+            if left.type == "bool" and right.type == "bool":
+                return Variable(left.value and right.value, "bool")
+            raise ValueError("[Semantic] Operador '&&' exige bool")
+        if self.value == "||":
+            if left.type == "bool" and right.type == "bool":
+                return Variable(left.value or right.value, "bool")
+            raise ValueError("[Semantic] Operador '||' exige bool")
         raise ValueError(f"[Semantic] Operador binario invalido: {self.value}")
 
 
 class Print(Node):
     def evaluate(self, st):
-        print(self.children[0].evaluate(st))
+        print(self.children[0].evaluate(st).value)
 
 
 class Assignment(Node):
@@ -88,6 +181,19 @@ class Assignment(Node):
         var_name = self.children[0].value
         val = self.children[1].evaluate(st)
         st.set_value(var_name, val)
+
+
+class VarDec(Node):
+    def __init__(self, value, children=None, is_mutable: bool = False):
+        super().__init__(value, children)
+        self.is_mutable = is_mutable
+
+    def evaluate(self, st):
+        var_name = self.children[0].value
+        value = None
+        if len(self.children) == 2:
+            value = self.children[1].evaluate(st)
+        st.create_variable(var_name, value, self.value, self.is_mutable)
 
 
 class Block(Node):
@@ -99,7 +205,9 @@ class Block(Node):
 class If(Node):
     def evaluate(self, st):
         condition = self.children[0].evaluate(st)
-        if condition != 0:
+        if condition.type != "bool":
+            raise ValueError("[Semantic] Condicao do if deve ser bool")
+        if condition.value:
             self.children[1].evaluate(st)
         elif len(self.children) == 3:
             self.children[2].evaluate(st)
@@ -107,14 +215,19 @@ class If(Node):
 
 class While(Node):
     def evaluate(self, st):
-        while self.children[0].evaluate(st) != 0:
+        while True:
+            condition = self.children[0].evaluate(st)
+            if condition.type != "bool":
+                raise ValueError("[Semantic] Condicao do while deve ser bool")
+            if not condition.value:
+                break
             self.children[1].evaluate(st)
 
 
 class Read(Node):
     def evaluate(self, st):
         try:
-            return int(input())
+            return Variable(int(input()), "i32")
         except ValueError:
             raise ValueError("[Semantic] scanln! esperava um inteiro")
 
@@ -137,6 +250,13 @@ class Lexer:
         "if":       "IF",
         "else":     "ELSE",
         "while":    "WHILE",
+        "let":      "LET",
+        "mut":      "MUT",
+        "true":     "BOOL",
+        "false":    "BOOL",
+        "str":      "TYPE",
+        "i32":      "TYPE",
+        "bool":     "TYPE",
     }
 
     def __init__(self, source):
@@ -184,6 +304,9 @@ class Lexer:
         elif char == ';':
             self.next = Token("END", ";")
             self.position += 1
+        elif char == ':':
+            self.next = Token("COLON", ":")
+            self.position += 1
         elif char == '>':
             self.next = Token("GT", ">")
             self.position += 1
@@ -229,9 +352,25 @@ class Lexer:
                 ident += '!'
                 self.position += 1
             if ident in Lexer.RESERVED_WORDS:
-                self.next = Token(Lexer.RESERVED_WORDS[ident], ident)
+                token_type = Lexer.RESERVED_WORDS[ident]
+                if token_type == "BOOL":
+                    self.next = Token("BOOL", ident == "true")
+                else:
+                    self.next = Token(token_type, ident)
             else:
                 self.next = Token("IDEN", ident)
+        elif char == '"':
+            self.position += 1
+            str_val = ""
+            while self.position < len(self.source) and self.source[self.position] != '"':
+                if self.source[self.position] == '\n':
+                    raise ValueError("[Lexer] String nao pode quebrar linha")
+                str_val += self.source[self.position]
+                self.position += 1
+            if self.position >= len(self.source):
+                raise ValueError("[Lexer] String sem aspas de fechamento")
+            self.position += 1
+            self.next = Token("STR", str_val)
         else:
             raise ValueError(f"[Lexer] Simbolo invalido: '{char}'")
 
@@ -264,6 +403,40 @@ class Parser:
 
         if tok.type == "OPEN_BRA":
             return Parser.parse_block()
+
+        if tok.type == "LET":
+            Parser.lexer.select_next()
+
+            is_mutable = False
+            if Parser.lexer.next.type == "MUT":
+                is_mutable = True
+                Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "IDEN":
+                raise ValueError("[Parser] Identificador esperado na declaracao")
+
+            ident_node = Identifier(Parser.lexer.next.value, [])
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "COLON":
+                raise ValueError("[Parser] ':' esperado na declaracao")
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "TYPE":
+                raise ValueError("[Parser] Tipo esperado na declaracao")
+            type_node = Node(Parser.lexer.next.value, [])
+            Parser.lexer.select_next()
+
+            children = [ident_node]
+            if Parser.lexer.next.type == "ASSIGN":
+                Parser.lexer.select_next()
+                children.append(Parser.parse_bool_expression())
+
+            if Parser.lexer.next.type != "END":
+                raise ValueError("[Parser] ';' esperado no final da declaracao")
+            Parser.lexer.select_next()
+
+            return VarDec(type_node.value, children, is_mutable)
 
         if tok.type == "IDEN":
             name = tok.value
@@ -402,6 +575,14 @@ class Parser:
         if tok.type == "INT":
             Parser.lexer.select_next()
             return IntVal(tok.value, [])
+
+        if tok.type == "BOOL":
+            Parser.lexer.select_next()
+            return BoolVal(tok.value, [])
+
+        if tok.type == "STR":
+            Parser.lexer.select_next()
+            return StrVal(tok.value, [])
 
         if tok.type == "IDEN":
             Parser.lexer.select_next()
