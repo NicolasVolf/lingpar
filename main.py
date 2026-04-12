@@ -148,6 +148,22 @@ class Cast(Node):
                 return Variable(float(child_val.value), "f64")
             raise ValueError("[Semantic] Cast para f64 exige i32 ou f64")
 
+        if target_type == "bool":
+            if child_val.type == "bool":
+                return child_val
+            if child_val.type in ("i32", "f64"):
+                return Variable(child_val.value != 0, "bool")
+            raise ValueError("[Semantic] Cast para bool exige i32, f64 ou bool")
+
+        if target_type == "str":
+            if child_val.type == "str":
+                return child_val
+            if child_val.type == "bool":
+                return Variable("true" if child_val.value else "false", "str")
+            if child_val.type in ("i32", "f64"):
+                return Variable(str(child_val.value), "str")
+            raise ValueError("[Semantic] Cast para str invalido")
+
         raise ValueError(f"[Semantic] Tipo de cast invalido: {target_type}")
 
 
@@ -645,7 +661,7 @@ class Parser:
         if tok.type == "OPEN_PAR":
             Parser.lexer.select_next()
 
-            if Parser.lexer.next.type == "TYPE" and Parser.lexer.next.value in ("i32", "f64"):
+            if Parser.lexer.next.type == "TYPE" and Parser.lexer.next.value in ("i32", "f64", "bool", "str"):
                 cast_type = Parser.lexer.next.value
                 Parser.lexer.select_next()
                 if Parser.lexer.next.type != "CLOSE_PAR":
