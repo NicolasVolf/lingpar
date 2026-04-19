@@ -1,6 +1,47 @@
 import sys
 import re
+import os
 from typing import Dict
+
+
+class Code:
+    instructions = []
+
+    @staticmethod
+    def append(code):
+        Code.instructions.append(code)
+
+    @staticmethod
+    def dump(filename):
+        header = (
+            'section .data\n'
+            '  format_out: db "%d", 10, 0\n'
+            '  format_in: db "%d", 0\n'
+            '  scan_int: dd 0\n'
+            '\n'
+            'section .text\n'
+            '  extern printf\n'
+            '  extern scanf\n'
+            '  global _start\n'
+            '\n'
+            '_start:\n'
+            '  push ebp\n'
+            '  mov ebp, esp\n'
+            '\n'
+        )
+        footer = (
+            '\n'
+            '  mov esp, ebp\n'
+            '  pop ebp\n'
+            '\n'
+            '  mov eax, 1\n'
+            '  xor ebx, ebx\n'
+            '  int 0x80\n'
+        )
+        with open(filename, 'w') as f:
+            f.write(header)
+            f.write("\n".join(Code.instructions))
+            f.write(footer)
 
 
 class Token:
@@ -10,21 +51,23 @@ class Token:
 
 
 class Variable:
-    def __init__(self, value, var_type: str, is_mutable: bool = False):
+    def __init__(self, value, var_type: str, is_mutable: bool = False, shift=None):
         self.value = value
         self.type = var_type
         self.is_mutable = is_mutable
+        self.shift = shift
 
 
 class SymbolTable:
     def __init__(self):
         self.table: Dict[str, Variable] = {}
+        self.next_shift = 0
 
     def get_value(self, name: str):
         if name not in self.table:
             raise ValueError(f"[Semantic] Variavel '{name}' nao existe")
         var = self.table[name]
-        return Variable(var.value, var.type)
+        return Variable(var.value, var.type, shift=var.shift)
 
     def create_variable(self, name: str, value, var_type: str, is_mutable: bool = False):
         if name in self.table:
@@ -51,7 +94,8 @@ class SymbolTable:
             raise ValueError(
                 f"[Semantic] Tipo invalido para '{name}': esperado {var_type}, recebido {value.type}"
             )
-        self.table[name] = Variable(value.value, var_type, is_mutable)
+        self.next_shift += 4
+        self.table[name] = Variable(value.value, var_type, is_mutable, shift=self.next_shift)
 
     def set_value(self, name: str, value):
         if name not in self.table:
@@ -78,11 +122,22 @@ class SymbolTable:
 
 
 class Node:
+    id = 0
+
+    @staticmethod
+    def newId():
+        Node.id += 1
+        return Node.id
+
     def __init__(self, value, children=None):
         self.value = value
         self.children = children if children is not None else []
+        self.id = Node.newId()
 
     def evaluate(self, st):
+        pass
+
+    def generate(self, st):
         pass
 
 
@@ -90,10 +145,16 @@ class IntVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "i32")
 
+    def generate(self, st):
+        Code.append(f"  mov eax, {self.value}")
+
 
 class BoolVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "bool")
+
+    def generate(self, st):
+        Code.append(f"  mov eax, {1 if self.value else 0}")
 
 
 class FloatVal(Node):
@@ -109,6 +170,10 @@ class StringVal(Node):
 class Identifier(Node):
     def evaluate(self, st):
         return st.get_value(self.value)
+
+    def generate(self, st):
+        shift = st.get_value(self.value).shift
+        Code.append(f"  mov eax, [ebp-{shift}]")
 
 
 class UnOp(Node):
@@ -127,6 +192,13 @@ class UnOp(Node):
                 raise ValueError("[Semantic] Operador '!' exige bool")
             return Variable(not child_val.value, "bool")
         raise ValueError(f"[Semantic] Operador unario invalido: {self.value}")
+
+    def generate(self, st):
+        self.children[0].generate(st)
+        if self.value == "-":
+            Code.append("  neg eax")
+        elif self.value == "!":
+            Code.append("  xor eax, 1")
 
 
 class Cast(Node):
@@ -242,6 +314,43 @@ class BinOp(Node):
             raise ValueError("[Semantic] Operador '||' exige bool")
         raise ValueError(f"[Semantic] Operador binario invalido: {self.value}")
 
+    def generate(self, st):
+        self.children[1].generate(st)
+        Code.append("  push eax")
+        self.children[0].generate(st)
+        Code.append("  pop ecx")
+        op = self.value
+        if op == "+":
+            Code.append("  add eax, ecx")
+        elif op == "-":
+            Code.append("  sub eax, ecx")
+        elif op == "*":
+            Code.append("  imul ecx")
+        elif op == "/":
+            Code.append("  cdq")
+            Code.append("  idiv ecx")
+        elif op == "^":
+            Code.append("  xor eax, ecx")
+        elif op == "==":
+            Code.append("  cmp eax, ecx")
+            Code.append("  mov eax, 0")
+            Code.append("  mov ecx, 1")
+            Code.append("  cmove eax, ecx")
+        elif op == "<":
+            Code.append("  cmp eax, ecx")
+            Code.append("  mov eax, 0")
+            Code.append("  mov ecx, 1")
+            Code.append("  cmovl eax, ecx")
+        elif op == ">":
+            Code.append("  cmp eax, ecx")
+            Code.append("  mov eax, 0")
+            Code.append("  mov ecx, 1")
+            Code.append("  cmovg eax, ecx")
+        elif op == "&&":
+            Code.append("  and eax, ecx")
+        elif op == "||":
+            Code.append("  or eax, ecx")
+
 
 class Print(Node):
     def evaluate(self, st):
@@ -251,12 +360,25 @@ class Print(Node):
             return
         print(value.value)
 
+    def generate(self, st):
+        self.children[0].generate(st)
+        Code.append("  push eax")
+        Code.append("  push format_out")
+        Code.append("  call printf")
+        Code.append("  add esp, 8")
+
 
 class Assignment(Node):
     def evaluate(self, st):
         var_name = self.children[0].value
         val = self.children[1].evaluate(st)
         st.set_value(var_name, val)
+
+    def generate(self, st):
+        self.children[1].generate(st)
+        name = self.children[0].value
+        shift = st.get_value(name).shift
+        Code.append(f"  mov [ebp-{shift}], eax")
 
 
 class VarDec(Node):
@@ -268,11 +390,25 @@ class VarDec(Node):
         is_mutable = getattr(self, "is_mutable", False)
         st.create_variable(var_name, value, self.value, is_mutable)
 
+    def generate(self, st):
+        var_name = self.children[0].value
+        is_mutable = getattr(self, "is_mutable", False)
+        st.create_variable(var_name, None, self.value, is_mutable)
+        Code.append(f"  sub esp, 4 ; var {var_name} {self.value}")
+        if len(self.children) == 2:
+            self.children[1].generate(st)
+            shift = st.get_value(var_name).shift
+            Code.append(f"  mov [ebp-{shift}], eax")
+
 
 class Block(Node):
     def evaluate(self, st):
         for child in self.children:
             child.evaluate(st)
+
+    def generate(self, st):
+        for child in self.children:
+            child.generate(st)
 
 
 class If(Node):
@@ -285,6 +421,22 @@ class If(Node):
         elif len(self.children) == 3:
             self.children[2].evaluate(st)
 
+    def generate(self, st):
+        nid = self.id
+        self.children[0].generate(st)
+        Code.append("  cmp eax, 0")
+        if len(self.children) == 3:
+            Code.append(f"  je else_{nid}")
+            self.children[1].generate(st)
+            Code.append(f"  jmp exit_{nid}")
+            Code.append(f"  else_{nid}:")
+            self.children[2].generate(st)
+            Code.append(f"  exit_{nid}:")
+        else:
+            Code.append(f"  je exit_{nid}")
+            self.children[1].generate(st)
+            Code.append(f"  exit_{nid}:")
+
 
 class While(Node):
     def evaluate(self, st):
@@ -296,6 +448,16 @@ class While(Node):
                 break
             self.children[1].evaluate(st)
 
+    def generate(self, st):
+        nid = self.id
+        Code.append(f"  loop_{nid}:")
+        self.children[0].generate(st)
+        Code.append("  cmp eax, 0")
+        Code.append(f"  je exit_{nid}")
+        self.children[1].generate(st)
+        Code.append(f"  jmp loop_{nid}")
+        Code.append(f"  exit_{nid}:")
+
 
 class Read(Node):
     def evaluate(self, st):
@@ -303,6 +465,13 @@ class Read(Node):
             return Variable(int(input()), "i32")
         except ValueError:
             raise ValueError("[Semantic] scanln! esperava um inteiro")
+
+    def generate(self, st):
+        Code.append("  push scan_int")
+        Code.append("  push format_in")
+        Code.append("  call scanf")
+        Code.append("  add esp, 8")
+        Code.append("  mov eax, dword [scan_int]")
 
 
 class NoOp(Node):
@@ -742,7 +911,9 @@ def main():
     filtered_code = PrePro.filter(source_code)
     tree = Parser.run(filtered_code)
     st = SymbolTable()
-    tree.evaluate(st)
+    tree.generate(st)
+    output_path = os.path.splitext(input_path)[0] + ".asm"
+    Code.dump(output_path)
 
 
 if __name__ == "__main__":
