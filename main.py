@@ -125,14 +125,14 @@ class Node:
     id = 0
 
     @staticmethod
-    def newId():
+    def new_id():
         Node.id += 1
         return Node.id
 
     def __init__(self, value, children=None):
         self.value = value
         self.children = children if children is not None else []
-        self.id = Node.newId()
+        self.id = Node.new_id()
 
     def evaluate(self, st):
         pass
@@ -157,14 +157,12 @@ class BoolVal(Node):
         Code.append(f"  mov eax, {1 if self.value else 0}")
 
 
-class FloatVal(Node):
-    def evaluate(self, st):
-        return Variable(self.value, "f64")
-
-
 class StringVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "str")
+
+    def generate(self, st):
+        pass
 
 
 class Identifier(Node):
@@ -199,44 +197,6 @@ class UnOp(Node):
             Code.append("  neg eax")
         elif self.value == "!":
             Code.append("  xor eax, 1")
-
-
-class Cast(Node):
-    def evaluate(self, st):
-        target_type = self.value
-        child_val = self.children[0].evaluate(st)
-
-        if target_type == "i32":
-            if child_val.type == "i32":
-                return child_val
-            if child_val.type == "f64":
-                return Variable(round(child_val.value), "i32")
-            raise ValueError("[Semantic] Cast para i32 exige i32 ou f64")
-
-        if target_type == "f64":
-            if child_val.type == "f64":
-                return child_val
-            if child_val.type == "i32":
-                return Variable(float(child_val.value), "f64")
-            raise ValueError("[Semantic] Cast para f64 exige i32 ou f64")
-
-        if target_type == "bool":
-            if child_val.type == "bool":
-                return child_val
-            if child_val.type in ("i32", "f64"):
-                return Variable(child_val.value != 0, "bool")
-            raise ValueError("[Semantic] Cast para bool exige i32, f64 ou bool")
-
-        if target_type == "str":
-            if child_val.type == "str":
-                return child_val
-            if child_val.type == "bool":
-                return Variable("true" if child_val.value else "false", "str")
-            if child_val.type in ("i32", "f64"):
-                return Variable(str(child_val.value), "str")
-            raise ValueError("[Semantic] Cast para str invalido")
-
-        raise ValueError(f"[Semantic] Tipo de cast invalido: {target_type}")
 
 
 class BinOp(Node):
@@ -477,6 +437,9 @@ class Read(Node):
 class NoOp(Node):
     def evaluate(self, st):
         return None
+
+    def generate(self, st):
+        pass
 
 
 class PrePro:
@@ -836,7 +799,7 @@ class Parser:
                 if Parser.lexer.next.type != "CLOSE_PAR":
                     raise ValueError("[Parser] ')' esperado apos tipo de cast")
                 Parser.lexer.select_next()
-                return Cast(cast_type, [Parser.parse_factor()])
+                return Node(cast_type, [Parser.parse_factor()])
 
             result = Parser.parse_bool_expression()
             if Parser.lexer.next.type != "CLOSE_PAR":
@@ -850,7 +813,7 @@ class Parser:
 
         if tok.type == "FLOAT":
             Parser.lexer.select_next()
-            return FloatVal(tok.value, [])
+            return Node(tok.value, [])
 
         if tok.type == "BOOL":
             Parser.lexer.select_next()
