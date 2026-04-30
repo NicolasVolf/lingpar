@@ -336,11 +336,17 @@ class Assignment(Node):
     def evaluate(self, st):
         var_name = self.children[0].value
         val = self.children[1].evaluate(st)
+        if var_name not in st.table:
+            st.create_variable(var_name, val, val.type, True)
+            return
         st.set_value(var_name, val)
 
     def generate(self, st):
         self.children[1].generate(st)
         name = self.children[0].value
+        if name not in st.table:
+            st.create_variable(name, Variable(0, "i32"), "i32", True)
+            Code.append(f"  sub esp, 4 ; var {name} i32 (inferred)")
         shift = st.get_value(name).shift
         Code.append(f"  mov [ebp-{shift}], eax")
 
