@@ -60,11 +60,6 @@ class Variable:
         self.is_function = is_function
 
 
-class ReturnSignal:
-    def __init__(self, value):
-        self.value = value
-
-
 class SymbolTable:
     def __init__(self, parent=None):
         self.table: Dict[str, Variable] = {}
@@ -407,7 +402,7 @@ class VarDec(Node):
 
 class Return(Node):
     def evaluate(self, st):
-        return ReturnSignal(self.children[0].evaluate(st))
+        return Variable(self.children[0].evaluate(st), "__return__")
 
     def generate(self, st):
         pass
@@ -483,6 +478,14 @@ class FuncCall(Node):
                 f"[Semantic] Funcao '{func_name}' deve retornar valor do tipo {expected_type}"
             )
 
+        if (
+            not isinstance(return_signal, Variable)
+            or return_signal.type != "__return__"
+        ):
+            raise ValueError(
+                f"[Semantic] Funcao '{func_name}' deve retornar valor do tipo {expected_type}"
+            )
+
         return_value = return_signal.value
 
         if return_value.type != expected_type:
@@ -505,7 +508,7 @@ class Block(Node):
             else:
                 result = child.evaluate(st)
 
-            if isinstance(result, ReturnSignal):
+            if isinstance(result, Variable) and result.type == "__return__":
                 return result
 
     def generate(self, st):
@@ -520,11 +523,11 @@ class If(Node):
             raise ValueError("[Semantic] Condicao do if deve ser bool")
         if condition.value:
             result = self.children[1].evaluate(st)
-            if isinstance(result, ReturnSignal):
+            if isinstance(result, Variable) and result.type == "__return__":
                 return result
         elif len(self.children) == 3:
             result = self.children[2].evaluate(st)
-            if isinstance(result, ReturnSignal):
+            if isinstance(result, Variable) and result.type == "__return__":
                 return result
 
     def generate(self, st):
@@ -553,7 +556,7 @@ class While(Node):
             if not condition.value:
                 break
             result = self.children[1].evaluate(st)
-            if isinstance(result, ReturnSignal):
+            if isinstance(result, Variable) and result.type == "__return__":
                 return result
 
     def generate(self, st):
