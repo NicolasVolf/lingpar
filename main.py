@@ -871,6 +871,7 @@ class Parser:
 
         ident_node = Identifier(Parser.lexer.next.value, [])
         Parser.lexer.select_next()
+        
 
         if Parser.lexer.next.type != "ASSIGN":
             raise ValueError("[Parser] '=' esperado em atribuicao")
