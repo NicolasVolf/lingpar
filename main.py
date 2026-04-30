@@ -773,7 +773,7 @@ class Parser:
     lexer = None
 
     @staticmethod
-    def parse_vardec(expect_end=True):
+    def parse_var_declaration():
         if Parser.lexer.next.type != "LET":
             raise ValueError("[Parser] 'let' esperado na declaracao")
         Parser.lexer.select_next()
@@ -803,24 +803,13 @@ class Parser:
             Parser.lexer.select_next()
             children.append(Parser.parse_bool_expression())
 
-        if expect_end:
-            if Parser.lexer.next.type != "END":
-                raise ValueError("[Parser] ';' esperado no final da declaracao")
-            Parser.lexer.select_next()
+        if Parser.lexer.next.type != "END":
+            raise ValueError("[Parser] ';' esperado no final da declaracao")
+        Parser.lexer.select_next()
 
         vardec_node = VarDec(declared_type, children)
         vardec_node.is_mutable = is_mutable
         return vardec_node
-
-    @staticmethod
-    def parse_call_args():
-        args = []
-        if Parser.lexer.next.type != "CLOSE_PAR":
-            args.append(Parser.parse_bool_expression())
-            while Parser.lexer.next.type == "COMMA":
-                Parser.lexer.select_next()
-                args.append(Parser.parse_bool_expression())
-        return args
 
     @staticmethod
     def parse_func_declaration():
@@ -890,7 +879,7 @@ class Parser:
         instructions = []
         while Parser.lexer.next.type != "EOF":
             if Parser.lexer.next.type == "LET":
-                instructions.append(Parser.parse_vardec(expect_end=True))
+                instructions.append(Parser.parse_var_declaration())
             elif Parser.lexer.next.type == "FUNC":
                 instructions.append(Parser.parse_func_declaration())
             else:
@@ -920,7 +909,7 @@ class Parser:
             return Parser.parse_block()
 
         if tok.type == "LET":
-            return Parser.parse_vardec(expect_end=True)
+            return Parser.parse_var_declaration()
 
         if tok.type == "RETURN":
             Parser.lexer.select_next()
@@ -945,7 +934,12 @@ class Parser:
 
             if Parser.lexer.next.type == "OPEN_PAR":
                 Parser.lexer.select_next()
-                args = Parser.parse_call_args()
+                args = []
+                if Parser.lexer.next.type != "CLOSE_PAR":
+                    args.append(Parser.parse_bool_expression())
+                    while Parser.lexer.next.type == "COMMA":
+                        Parser.lexer.select_next()
+                        args.append(Parser.parse_bool_expression())
                 if Parser.lexer.next.type != "CLOSE_PAR":
                     raise ValueError("[Parser] ')' esperado na chamada de funcao")
                 Parser.lexer.select_next()
@@ -1121,7 +1115,12 @@ class Parser:
             Parser.lexer.select_next()
             if Parser.lexer.next.type == "OPEN_PAR":
                 Parser.lexer.select_next()
-                args = Parser.parse_call_args()
+                args = []
+                if Parser.lexer.next.type != "CLOSE_PAR":
+                    args.append(Parser.parse_bool_expression())
+                    while Parser.lexer.next.type == "COMMA":
+                        Parser.lexer.select_next()
+                        args.append(Parser.parse_bool_expression())
                 if Parser.lexer.next.type != "CLOSE_PAR":
                     raise ValueError("[Parser] ')' esperado na chamada de funcao")
                 Parser.lexer.select_next()
