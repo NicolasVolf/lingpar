@@ -1,47 +1,6 @@
 import sys
 import re
-import os
 from typing import Dict
-
-
-class Code:
-    instructions = []
-
-    @staticmethod
-    def append(code):
-        Code.instructions.append(code)
-
-    @staticmethod
-    def dump(filename):
-        header = (
-            'section .data\n'
-            '  format_out: db "%d", 10, 0\n'
-            '  format_in: db "%d", 0\n'
-            '  scan_int: dd 0\n'
-            '\n'
-            'section .text\n'
-            '  extern printf\n'
-            '  extern scanf\n'
-            '  global _start\n'
-            '\n'
-            '_start:\n'
-            '  push ebp\n'
-            '  mov ebp, esp\n'
-            '\n'
-        )
-        footer = (
-            '\n'
-            '  mov esp, ebp\n'
-            '  pop ebp\n'
-            '\n'
-            '  mov eax, 1\n'
-            '  xor ebx, ebx\n'
-            '  int 0x80\n'
-        )
-        with open(filename, 'w') as f:
-            f.write(header)
-            f.write("\n".join(Code.instructions))
-            f.write(footer)
 
 
 class Token:
@@ -51,25 +10,25 @@ class Token:
 
 
 class Variable:
-    def __init__(self, value, var_type: str, is_mutable: bool = False, shift=None):
+    def __init__(self, value, var_type: str, is_mutable: bool = False):
         self.value = value
         self.type = var_type
         self.is_mutable = is_mutable
-        self.shift = shift
 
 
 class SymbolTable:
     def __init__(self):
         self.table: Dict[str, Variable] = {}
-        self.next_shift = 0
 
     def get_value(self, name: str):
         if name not in self.table:
             raise ValueError(f"[Semantic] Variavel '{name}' nao existe")
         var = self.table[name]
-        return Variable(var.value, var.type, shift=var.shift)
+        return Variable(var.value, var.type)
 
-    def create_variable(self, name: str, value, var_type: str, is_mutable: bool = False):
+    def create_variable(
+        self, name: str, value, var_type: str, is_mutable: bool = False
+    ):
         if name in self.table:
             raise ValueError(f"[Semantic] Variavel '{name}' ja foi declarada")
         if value is None:
@@ -85,17 +44,18 @@ class SymbolTable:
         is_valid_type = (
             isinstance(value, Variable)
             and value.type == var_type
-            and ((var_type == "i32" and type(value.value) is int)
-                 or (var_type == "f64" and type(value.value) is float)
-                 or (var_type == "bool" and type(value.value) is bool)
-                 or (var_type == "str" and type(value.value) is str))
+            and (
+                (var_type == "i32" and type(value.value) is int)
+                or (var_type == "f64" and type(value.value) is float)
+                or (var_type == "bool" and type(value.value) is bool)
+                or (var_type == "str" and type(value.value) is str)
+            )
         )
         if not is_valid_type:
             raise ValueError(
                 f"[Semantic] Tipo invalido para '{name}': esperado {var_type}, recebido {value.type}"
             )
-        self.next_shift += 4
-        self.table[name] = Variable(value.value, var_type, is_mutable, shift=self.next_shift)
+        self.table[name] = Variable(value.value, var_type, is_mutable)
 
     def set_value(self, name: str, value):
         if name not in self.table:
@@ -108,10 +68,12 @@ class SymbolTable:
         is_valid_type = (
             isinstance(value, Variable)
             and value.type == variable.type
-            and ((variable.type == "i32" and type(value.value) is int)
-                 or (variable.type == "f64" and type(value.value) is float)
-                 or (variable.type == "bool" and type(value.value) is bool)
-                 or (variable.type == "str" and type(value.value) is str))
+            and (
+                (variable.type == "i32" and type(value.value) is int)
+                or (variable.type == "f64" and type(value.value) is float)
+                or (variable.type == "bool" and type(value.value) is bool)
+                or (variable.type == "str" and type(value.value) is str)
+            )
         )
         if not is_valid_type:
             raise ValueError(
@@ -122,22 +84,11 @@ class SymbolTable:
 
 
 class Node:
-    id = 0
-
-    @staticmethod
-    def new_id():
-        Node.id += 1
-        return Node.id
-
     def __init__(self, value, children=None):
         self.value = value
         self.children = children if children is not None else []
-        self.id = Node.new_id()
 
     def evaluate(self, st):
-        pass
-
-    def generate(self, st):
         pass
 
 
@@ -145,33 +96,25 @@ class IntVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "i32")
 
-    def generate(self, st):
-        Code.append(f"  mov eax, {self.value}")
-
 
 class BoolVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "bool")
 
-    def generate(self, st):
-        Code.append(f"  mov eax, {1 if self.value else 0}")
+
+class FloatVal(Node):
+    def evaluate(self, st):
+        return Variable(self.value, "f64")
 
 
 class StringVal(Node):
     def evaluate(self, st):
         return Variable(self.value, "str")
 
-    def generate(self, st):
-        pass
-
 
 class Identifier(Node):
     def evaluate(self, st):
         return st.get_value(self.value)
-
-    def generate(self, st):
-        shift = st.get_value(self.value).shift
-        Code.append(f"  mov eax, [ebp-{shift}]")
 
 
 class UnOp(Node):
@@ -191,17 +134,48 @@ class UnOp(Node):
             return Variable(not child_val.value, "bool")
         raise ValueError(f"[Semantic] Operador unario invalido: {self.value}")
 
-    def generate(self, st):
-        self.children[0].generate(st)
-        if self.value == "-":
-            Code.append("  neg eax")
-        elif self.value == "!":
-            Code.append("  xor eax, 1")
+
+class Cast(Node):
+    def evaluate(self, st):
+        target_type = self.value
+        child_val = self.children[0].evaluate(st)
+
+        if target_type == "i32":
+            if child_val.type == "i32":
+                return child_val
+            if child_val.type == "f64":
+                return Variable(round(child_val.value), "i32")
+            raise ValueError("[Semantic] Cast para i32 exige i32 ou f64")
+
+        if target_type == "f64":
+            if child_val.type == "f64":
+                return child_val
+            if child_val.type == "i32":
+                return Variable(float(child_val.value), "f64")
+            raise ValueError("[Semantic] Cast para f64 exige i32 ou f64")
+
+        if target_type == "bool":
+            if child_val.type == "bool":
+                return child_val
+            if child_val.type in ("i32", "f64"):
+                return Variable(child_val.value != 0, "bool")
+            raise ValueError("[Semantic] Cast para bool exige i32, f64 ou bool")
+
+        if target_type == "str":
+            if child_val.type == "str":
+                return child_val
+            if child_val.type == "bool":
+                return Variable("true" if child_val.value else "false", "str")
+            if child_val.type in ("i32", "f64"):
+                return Variable(str(child_val.value), "str")
+            raise ValueError("[Semantic] Cast para str invalido")
+
+        raise ValueError(f"[Semantic] Tipo de cast invalido: {target_type}")
 
 
 class BinOp(Node):
     def evaluate(self, st):
-        left  = self.children[0].evaluate(st)
+        left = self.children[0].evaluate(st)
         right = self.children[1].evaluate(st)
 
         def stringify(var):
@@ -223,7 +197,9 @@ class BinOp(Node):
                 return Variable(left.value + right.value, result_type)
             if left.type == "str" or right.type == "str":
                 return Variable(stringify(left) + stringify(right), "str")
-            raise ValueError("[Semantic] Operador '+' exige numeros ou concatenacao com str")
+            raise ValueError(
+                "[Semantic] Operador '+' exige numeros ou concatenacao com str"
+            )
         if self.value == "-":
             if both_numeric(left, right):
                 result_type = promoted_numeric_type(left, right)
@@ -274,43 +250,6 @@ class BinOp(Node):
             raise ValueError("[Semantic] Operador '||' exige bool")
         raise ValueError(f"[Semantic] Operador binario invalido: {self.value}")
 
-    def generate(self, st):
-        self.children[1].generate(st)
-        Code.append("  push eax")
-        self.children[0].generate(st)
-        Code.append("  pop ecx")
-        op = self.value
-        if op == "+":
-            Code.append("  add eax, ecx")
-        elif op == "-":
-            Code.append("  sub eax, ecx")
-        elif op == "*":
-            Code.append("  imul ecx")
-        elif op == "/":
-            Code.append("  cdq")
-            Code.append("  idiv ecx")
-        elif op == "^":
-            Code.append("  xor eax, ecx")
-        elif op == "==":
-            Code.append("  cmp eax, ecx")
-            Code.append("  mov eax, 0")
-            Code.append("  mov ecx, 1")
-            Code.append("  cmove eax, ecx")
-        elif op == "<":
-            Code.append("  cmp eax, ecx")
-            Code.append("  mov eax, 0")
-            Code.append("  mov ecx, 1")
-            Code.append("  cmovl eax, ecx")
-        elif op == ">":
-            Code.append("  cmp eax, ecx")
-            Code.append("  mov eax, 0")
-            Code.append("  mov ecx, 1")
-            Code.append("  cmovg eax, ecx")
-        elif op == "&&":
-            Code.append("  and eax, ecx")
-        elif op == "||":
-            Code.append("  or eax, ecx")
-
 
 class Print(Node):
     def evaluate(self, st):
@@ -320,25 +259,12 @@ class Print(Node):
             return
         print(value.value)
 
-    def generate(self, st):
-        self.children[0].generate(st)
-        Code.append("  push eax")
-        Code.append("  push format_out")
-        Code.append("  call printf")
-        Code.append("  add esp, 8")
-
 
 class Assignment(Node):
     def evaluate(self, st):
         var_name = self.children[0].value
         val = self.children[1].evaluate(st)
         st.set_value(var_name, val)
-
-    def generate(self, st):
-        self.children[1].generate(st)
-        name = self.children[0].value
-        shift = st.get_value(name).shift
-        Code.append(f"  mov [ebp-{shift}], eax")
 
 
 class VarDec(Node):
@@ -350,25 +276,11 @@ class VarDec(Node):
         is_mutable = getattr(self, "is_mutable", False)
         st.create_variable(var_name, value, self.value, is_mutable)
 
-    def generate(self, st):
-        var_name = self.children[0].value
-        is_mutable = getattr(self, "is_mutable", False)
-        st.create_variable(var_name, None, self.value, is_mutable)
-        Code.append(f"  sub esp, 4 ; var {var_name} {self.value}")
-        if len(self.children) == 2:
-            self.children[1].generate(st)
-            shift = st.get_value(var_name).shift
-            Code.append(f"  mov [ebp-{shift}], eax")
-
 
 class Block(Node):
     def evaluate(self, st):
         for child in self.children:
             child.evaluate(st)
-
-    def generate(self, st):
-        for child in self.children:
-            child.generate(st)
 
 
 class If(Node):
@@ -381,21 +293,22 @@ class If(Node):
         elif len(self.children) == 3:
             self.children[2].evaluate(st)
 
-    def generate(self, st):
-        nid = self.id
-        self.children[0].generate(st)
-        Code.append("  cmp eax, 0")
-        if len(self.children) == 3:
-            Code.append(f"  je else_{nid}")
-            self.children[1].generate(st)
-            Code.append(f"  jmp exit_{nid}")
-            Code.append(f"  else_{nid}:")
-            self.children[2].generate(st)
-            Code.append(f"  exit_{nid}:")
-        else:
-            Code.append(f"  je exit_{nid}")
-            self.children[1].generate(st)
-            Code.append(f"  exit_{nid}:")
+
+class IfExpr(Node):
+    def evaluate(self, st):
+        condition = self.children[0].evaluate(st)
+        if condition.type != "bool":
+            raise ValueError("[Semantic] Condicao do if expression deve ser bool")
+
+        then_value = self.children[1].evaluate(st)
+        else_value = self.children[2].evaluate(st)
+
+        if then_value.type != else_value.type:
+            raise ValueError("[Semantic] Ramos do if expression devem ter o mesmo tipo")
+
+        if condition.value:
+            return then_value
+        return else_value
 
 
 class While(Node):
@@ -408,15 +321,20 @@ class While(Node):
                 break
             self.children[1].evaluate(st)
 
-    def generate(self, st):
-        nid = self.id
-        Code.append(f"  loop_{nid}:")
-        self.children[0].generate(st)
-        Code.append("  cmp eax, 0")
-        Code.append(f"  je exit_{nid}")
-        self.children[1].generate(st)
-        Code.append(f"  jmp loop_{nid}")
-        Code.append(f"  exit_{nid}:")
+
+class For(Node):
+    def evaluate(self, st):
+        self.children[0].evaluate(st)
+
+        while True:
+            condition = self.children[1].evaluate(st)
+            if condition.type != "bool":
+                raise ValueError("[Semantic] Condicao do for deve ser bool")
+            if not condition.value:
+                break
+
+            self.children[3].evaluate(st)
+            self.children[2].evaluate(st)
 
 
 class Read(Node):
@@ -426,20 +344,10 @@ class Read(Node):
         except ValueError:
             raise ValueError("[Semantic] scanln! esperava um inteiro")
 
-    def generate(self, st):
-        Code.append("  push scan_int")
-        Code.append("  push format_in")
-        Code.append("  call scanf")
-        Code.append("  add esp, 8")
-        Code.append("  mov eax, dword [scan_int]")
-
 
 class NoOp(Node):
     def evaluate(self, st):
         return None
-
-    def generate(self, st):
-        pass
 
 
 class PrePro:
@@ -451,24 +359,25 @@ class PrePro:
 class Lexer:
     RESERVED_WORDS = {
         "println!": "PRINT",
-        "scanln!":  "READ",
-        "if":       "IF",
-        "else":     "ELSE",
-        "while":    "WHILE",
-        "let":      "LET",
-        "mut":      "MUT",
-        "true":     "BOOL",
-        "false":    "BOOL",
-        "str":      "TYPE",
-        "i32":      "TYPE",
-        "f64":      "TYPE",
-        "bool":     "TYPE",
+        "scanln!": "READ",
+        "if": "IF",
+        "else": "ELSE",
+        "while": "WHILE",
+        "for": "FOR",
+        "let": "LET",
+        "mut": "MUT",
+        "true": "BOOL",
+        "false": "BOOL",
+        "str": "TYPE",
+        "i32": "TYPE",
+        "f64": "TYPE",
+        "bool": "TYPE",
     }
 
     def __init__(self, source):
-        self.source   = source
+        self.source = source
         self.position = 0
-        self.next     = None
+        self.next = None
 
     def select_next(self):
         while self.position < len(self.source) and self.source[self.position].isspace():
@@ -480,92 +389,115 @@ class Lexer:
 
         char = self.source[self.position]
 
-        if char == '+':
+        if char == "+":
             self.next = Token("PLUS", "+")
             self.position += 1
-        elif char == '-':
+        elif char == "-":
             self.next = Token("MINUS", "-")
             self.position += 1
-        elif char == '*':
+        elif char == "*":
             self.next = Token("MUL", "*")
             self.position += 1
-        elif char == '/':
+        elif char == "/":
             self.next = Token("DIV", "/")
             self.position += 1
-        elif char == '^':
+        elif char == "^":
             self.next = Token("XOR", "^")
             self.position += 1
-        elif char == '(':
+        elif char == "(":
             self.next = Token("OPEN_PAR", "(")
             self.position += 1
-        elif char == ')':
+        elif char == ")":
             self.next = Token("CLOSE_PAR", ")")
             self.position += 1
-        elif char == '{':
+        elif char == "{":
             self.next = Token("OPEN_BRA", "{")
             self.position += 1
-        elif char == '}':
+        elif char == "}":
             self.next = Token("CLOSE_BRA", "}")
             self.position += 1
-        elif char == ';':
+        elif char == ";":
             self.next = Token("END", ";")
             self.position += 1
-        elif char == ':':
+        elif char == ":":
             self.next = Token("COLON", ":")
             self.position += 1
-        elif char == '>':
+        elif char == ">":
             self.next = Token("GT", ">")
             self.position += 1
-        elif char == '<':
+        elif char == "<":
             self.next = Token("LT", "<")
             self.position += 1
-        elif char == '=':
-            if self.position + 1 < len(self.source) and self.source[self.position + 1] == '=':
+        elif char == "=":
+            if (
+                self.position + 1 < len(self.source)
+                and self.source[self.position + 1] == "="
+            ):
                 self.next = Token("EQ", "==")
                 self.position += 2
             else:
                 self.next = Token("ASSIGN", "=")
                 self.position += 1
-        elif char == '&':
-            if self.position + 1 < len(self.source) and self.source[self.position + 1] == '&':
+        elif char == "&":
+            if (
+                self.position + 1 < len(self.source)
+                and self.source[self.position + 1] == "&"
+            ):
                 self.next = Token("AND", "&&")
                 self.position += 2
             else:
                 raise ValueError("[Lexer] '&' isolado invalido; use '&&'")
-        elif char == '|':
-            if self.position + 1 < len(self.source) and self.source[self.position + 1] == '|':
+        elif char == "|":
+            if (
+                self.position + 1 < len(self.source)
+                and self.source[self.position + 1] == "|"
+            ):
                 self.next = Token("OR", "||")
                 self.position += 2
             else:
                 raise ValueError("[Lexer] '|' isolado invalido; use '||'")
-        elif char == '!':
+        elif char == "!":
             self.next = Token("NOT", "!")
             self.position += 1
         elif char.isdigit():
             num = char
             self.position += 1
-            while self.position < len(self.source) and self.source[self.position].isdigit():
+            while (
+                self.position < len(self.source)
+                and self.source[self.position].isdigit()
+            ):
                 num += self.source[self.position]
                 self.position += 1
-            if self.position < len(self.source) and self.source[self.position] == '.':
-                num += '.'
+            if self.position < len(self.source) and self.source[self.position] == ".":
+                num += "."
                 self.position += 1
-                if self.position >= len(self.source) or not self.source[self.position].isdigit():
-                    raise ValueError("[Lexer] Float invalido: digitos esperados apos '.'")
-                while self.position < len(self.source) and self.source[self.position].isdigit():
+                if (
+                    self.position >= len(self.source)
+                    or not self.source[self.position].isdigit()
+                ):
+                    raise ValueError(
+                        "[Lexer] Float invalido: digitos esperados apos '.'"
+                    )
+                while (
+                    self.position < len(self.source)
+                    and self.source[self.position].isdigit()
+                ):
                     num += self.source[self.position]
                     self.position += 1
                 self.next = Token("FLOAT", float(num))
             else:
                 self.next = Token("INT", int(num))
-        elif char.isalpha() or char == '_':
+        elif char.isalpha() or char == "_":
             ident = char
             self.position += 1
-            while self.position < len(self.source) and (self.source[self.position].isalnum() or self.source[self.position] == "_"):
+            while self.position < len(self.source) and (
+                self.source[self.position].isalnum()
+                or self.source[self.position] == "_"
+            ):
                 ident += self.source[self.position]
                 self.position += 1
-            if self.position < len(self.source) and self.source[self.position] == '!':
-                ident += '!'
+            if self.position < len(self.source) and self.source[self.position] == "!":
+                ident += "!"
                 self.position += 1
             if ident in Lexer.RESERVED_WORDS:
                 token_type = Lexer.RESERVED_WORDS[ident]
@@ -578,8 +510,10 @@ class Lexer:
         elif char == '"':
             self.position += 1
             str_val = ""
-            while self.position < len(self.source) and self.source[self.position] != '"':
-                if self.source[self.position] == '\n':
+            while (
+                self.position < len(self.source) and self.source[self.position] != '"'
+            ):
+                if self.source[self.position] == "\n":
                     raise ValueError("[Lexer] String nao pode quebrar linha")
                 str_val += self.source[self.position]
                 self.position += 1
@@ -613,6 +547,40 @@ class Parser:
 
         Parser.lexer.select_next()
         return Block("BLOCK", instructions)
+
+    def parse_expr_block():
+        if Parser.lexer.next.type != "OPEN_BRA":
+            raise ValueError("[Parser] '{' esperado para iniciar bloco de expressao")
+        Parser.lexer.select_next()
+
+        expr = Parser.parse_bool_expression()
+
+        if Parser.lexer.next.type != "CLOSE_BRA":
+            raise ValueError("[Parser] '}' esperado para fechar bloco de expressao")
+        Parser.lexer.select_next()
+
+        return expr
+
+    def parse_assignment_statement(expect_end=True):
+        if Parser.lexer.next.type != "IDEN":
+            raise ValueError("[Parser] Identificador esperado na atribuicao")
+
+        name = Parser.lexer.next.value
+        ident_node = Identifier(name, [])
+        Parser.lexer.select_next()
+
+        if Parser.lexer.next.type != "ASSIGN":
+            raise ValueError("[Parser] '=' esperado apos identificador")
+        Parser.lexer.select_next()
+
+        expr = Parser.parse_bool_expression()
+
+        if expect_end:
+            if Parser.lexer.next.type != "END":
+                raise ValueError("[Parser] ';' esperado no final da atribuicao")
+            Parser.lexer.select_next()
+
+        return Assignment("=", [ident_node, expr])
 
     def parse_statement():
         tok = Parser.lexer.next
@@ -657,21 +625,7 @@ class Parser:
             return vardec_node
 
         if tok.type == "IDEN":
-            name = tok.value
-            ident_node = Identifier(name, [])
-            Parser.lexer.select_next()
-
-            if Parser.lexer.next.type != "ASSIGN":
-                raise ValueError("[Parser] '=' esperado apos identificador")
-            Parser.lexer.select_next()
-
-            expr = Parser.parse_bool_expression()
-
-            if Parser.lexer.next.type != "END":
-                raise ValueError("[Parser] ';' esperado no final da atribuicao")
-            Parser.lexer.select_next()
-
-            return Assignment("=", [ident_node, expr])
+            return Parser.parse_assignment_statement(expect_end=True)
 
         if tok.type == "PRINT":
             Parser.lexer.select_next()
@@ -730,11 +684,41 @@ class Parser:
             body = Parser.parse_block()
             return While("WHILE", [cond, body])
 
+        if tok.type == "FOR":
+            Parser.lexer.select_next()
+
+            if Parser.lexer.next.type != "OPEN_PAR":
+                raise ValueError("[Parser] '(' esperado apos 'for'")
+            Parser.lexer.select_next()
+
+            init = Parser.parse_assignment_statement(expect_end=False)
+
+            if Parser.lexer.next.type != "END":
+                raise ValueError("[Parser] ';' esperado apos inicializacao do for")
+            Parser.lexer.select_next()
+
+            cond = Parser.parse_bool_expression()
+
+            if Parser.lexer.next.type != "END":
+                raise ValueError("[Parser] ';' esperado apos condicao do for")
+            Parser.lexer.select_next()
+
+            increment = Parser.parse_assignment_statement(expect_end=False)
+
+            if Parser.lexer.next.type != "CLOSE_PAR":
+                raise ValueError("[Parser] ')' esperado ao final do for")
+            Parser.lexer.select_next()
+
+            body = Parser.parse_block()
+            return For("FOR", [init, cond, increment, body])
+
         if tok.type == "END":
             Parser.lexer.select_next()
             return NoOp("NOOP", [])
 
-        raise ValueError(f"[Parser] Instrucao invalida, token: {tok.type} = '{tok.value}'")
+        raise ValueError(
+            f"[Parser] Instrucao invalida, token: {tok.type} = '{tok.value}'"
+        )
 
     def parse_bool_expression():
         result = Parser.parse_bool_term()
@@ -793,13 +777,18 @@ class Parser:
         if tok.type == "OPEN_PAR":
             Parser.lexer.select_next()
 
-            if Parser.lexer.next.type == "TYPE" and Parser.lexer.next.value in ("i32", "f64", "bool", "str"):
+            if Parser.lexer.next.type == "TYPE" and Parser.lexer.next.value in (
+                "i32",
+                "f64",
+                "bool",
+                "str",
+            ):
                 cast_type = Parser.lexer.next.value
                 Parser.lexer.select_next()
                 if Parser.lexer.next.type != "CLOSE_PAR":
                     raise ValueError("[Parser] ')' esperado apos tipo de cast")
                 Parser.lexer.select_next()
-                return Node(cast_type, [Parser.parse_factor()])
+                return Cast(cast_type, [Parser.parse_factor()])
 
             result = Parser.parse_bool_expression()
             if Parser.lexer.next.type != "CLOSE_PAR":
@@ -813,7 +802,7 @@ class Parser:
 
         if tok.type == "FLOAT":
             Parser.lexer.select_next()
-            return Node(tok.value, [])
+            return FloatVal(tok.value, [])
 
         if tok.type == "BOOL":
             Parser.lexer.select_next()
@@ -852,7 +841,22 @@ class Parser:
 
             return Read("READ", [])
 
-        raise ValueError(f"[Parser] Token invalido em parse_factor: {tok.type} = '{tok.value}'")
+        if tok.type == "IF":
+            Parser.lexer.select_next()
+
+            condition = Parser.parse_bool_expression()
+            then_expr = Parser.parse_expr_block()
+
+            if Parser.lexer.next.type != "ELSE":
+                raise ValueError("[Parser] 'else' obrigatorio no if expression")
+            Parser.lexer.select_next()
+
+            else_expr = Parser.parse_expr_block()
+            return IfExpr("IF_EXPR", [condition, then_expr, else_expr])
+
+        raise ValueError(
+            f"[Parser] Token invalido em parse_factor: {tok.type} = '{tok.value}'"
+        )
 
     def run(code):
         Parser.lexer = Lexer(code)
@@ -874,9 +878,7 @@ def main():
     filtered_code = PrePro.filter(source_code)
     tree = Parser.run(filtered_code)
     st = SymbolTable()
-    tree.generate(st)
-    output_path = os.path.splitext(input_path)[0] + ".asm"
-    Code.dump(output_path)
+    tree.evaluate(st)
 
 
 if __name__ == "__main__":
