@@ -4,24 +4,38 @@
 
 
 
-Diagrama sintático que define a gramática das expressões matemáticas suportadas por este projeto:
+Diagrama sintatico e EBNF final (Roteiro 9):
 
 ![Diagrama Sintático da Expressão](Screenshot_1.png)
 
 ```ebnf
-
-PROGRAM = { STATEMENT } ;
-STATEMENT = ((IF, "(", BOOLEXPRESSION, ")", STATEMENT, ("ELSE", STATEMENT) | ε) | (WHILE, "(", BOOLEXPRESSION, ")", STATEMENT) | (FOR, "(", IDENTIFIER, "=", BOOLEXPRESSION, ";", BOOLEXPRESSION, ";", IDENTIFIER, "=", BOOLEXPRESSION, ")", STATEMENT) | (IDENTIFIER, "=", BOOLEXPRESSION) | (PRINT, "(", BOOLEXPRESSION, ")") | ε), EOL ;
+PROGRAM = { FUNCDEC | VARDEC } ;
+FUNCDEC = "fn", IDENTIFIER, "(", ( | IDENTIFIER, ":", TYPE, { ",", IDENTIFIER, ":", TYPE }), ")", ("->", (TYPE | "(", ")") | ), BLOCK ;
+VARDEC = "let", "mut", IDENTIFIER, ":", TYPE, ( | "=", BOOLEXPRESSION ), ";" ;
+BLOCK = "{", { STATEMENT }, "}" ;
+STATEMENT = ( | (IDENTIFIER, ("=", BOOLEXPRESSION | "(", (BOOLEXPRESSION, { ",", BOOLEXPRESSION } | ), ")")) | ("println!", "(", BOOLEXPRESSION, ")") | "return", BOOLEXPRESSION | ), ";"
+          | ("if", "(", BOOLEXPRESSION, ")", STATEMENT, ( | "else", STATEMENT))
+          | ("while", "(", BOOLEXPRESSION, ")", STATEMENT)
+          | VARDEC
+          | BLOCK ;
 BOOLEXPRESSION = BOOLTERM, { "||", BOOLTERM } ;
 BOOLTERM = RELEXPRESSION, { "&&", RELEXPRESSION } ;
-RELEXPRESSION = EXPRESSION, ("==" | "<" | ">"), EXPRESSION ;
+RELEXPRESSION = EXPRESSION, {("==" | "<" | ">"), EXPRESSION} ;
 EXPRESSION = TERM, { ("+" | "-"), TERM } ;
 TERM = FACTOR, { ("*" | "/"), FACTOR } ;
-FACTOR = ("+" | "-"), FACTOR | "(", BOOLEXPRESSION, ")" | NUMBER | READ, "(", ")" | IF, BOOLEXPRESSION, EXPRBLOCK, ELSE, EXPRBLOCK ;
-EXPRBLOCK = "{", BOOLEXPRESSION, "}" ;
-NUMBER = DIGIT, {DIGIT} ;
-DIGIT = 0 | 1 | ... | 9 ;
+FACTOR = NUMBER
+       | STRING
+       | BOOLEAN
+       | IDENTIFIER, ("(", (BOOLEXPRESSION, { ",", BOOLEXPRESSION } | ), ")" | )
+       | ("+" | "-" | "!"), FACTOR
+       | "(", BOOLEXPRESSION, ")"
+       | "scanln!", "(", ")" ;
+TYPE = "i32" | "str" | "bool" ;
+NUMBER = DIGIT, { DIGIT } ;
 IDENTIFIER = LETTER, {LETTER | DIGIT | "_"} ;
-LETTER = a | b | ... | z | A | B | ... | Z ;
+STRING = '"..."' ;
+DIGIT = "0" | "..." | "9" ;
+LETTER = "a" | "..." | "z" | "A" | "..." | "Z" ;
+BOOLEAN = "true" | "false" ;
 
 ```
