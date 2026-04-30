@@ -60,6 +60,11 @@ class Variable:
         self.is_function = is_function
 
 
+class ReturnSignal:
+    def __init__(self, value):
+        self.value = value
+
+
 class SymbolTable:
     def __init__(self, parent=None):
         self.table: Dict[str, Variable] = {}
@@ -402,7 +407,7 @@ class VarDec(Node):
 
 class Return(Node):
     def evaluate(self, st):
-        return self.children[0].evaluate(st)
+        return ReturnSignal(self.children[0].evaluate(st))
 
     def generate(self, st):
         pass
@@ -463,20 +468,22 @@ class FuncCall(Node):
                 is_function=False,
             )
 
-        return_value = func_block.evaluate(call_st)
+        return_signal = func_block.evaluate(call_st)
         expected_type = func_node.value
 
         if expected_type == "unit":
-            if return_value is not None:
+            if return_signal is not None:
                 raise ValueError(
                     f"[Semantic] Funcao '{func_name}' e unit e nao deve retornar valor"
                 )
             return Variable(None, "unit")
 
-        if return_value is None:
+        if return_signal is None:
             raise ValueError(
                 f"[Semantic] Funcao '{func_name}' deve retornar valor do tipo {expected_type}"
             )
+
+        return_value = return_signal.value
 
         if return_value.type != expected_type:
             raise ValueError(
@@ -498,7 +505,7 @@ class Block(Node):
             else:
                 result = child.evaluate(st)
 
-            if isinstance(child, Return) or result is not None:
+            if isinstance(result, ReturnSignal):
                 return result
 
     def generate(self, st):
@@ -513,11 +520,11 @@ class If(Node):
             raise ValueError("[Semantic] Condicao do if deve ser bool")
         if condition.value:
             result = self.children[1].evaluate(st)
-            if result is not None:
+            if isinstance(result, ReturnSignal):
                 return result
         elif len(self.children) == 3:
             result = self.children[2].evaluate(st)
-            if result is not None:
+            if isinstance(result, ReturnSignal):
                 return result
 
     def generate(self, st):
@@ -546,7 +553,7 @@ class While(Node):
             if not condition.value:
                 break
             result = self.children[1].evaluate(st)
-            if result is not None:
+            if isinstance(result, ReturnSignal):
                 return result
 
     def generate(self, st):
