@@ -264,7 +264,10 @@ class Assignment(Node):
     def evaluate(self, st):
         var_name = self.children[0].value
         val = self.children[1].evaluate(st)
-        st.set_value(var_name, val)
+        if var_name in st.table:
+            st.set_value(var_name, val)
+            return
+        st.create_variable(var_name, val, val.type, True)
 
 
 class VarDec(Node):
