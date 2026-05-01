@@ -1,0 +1,1 @@
+fn sum(a:i32,b:i32)->i32 { return a + b; } fn main() -> () { let mut x:i32; x = sum(10,3); println!(x); }

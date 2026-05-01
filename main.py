@@ -78,6 +78,7 @@ class SymbolTable:
         self.structs: Dict[str, StructType] = {}
         self.next_shift = 0
         self.parent = parent
+        self.current_function_end_label = ""
 
     def _is_primitive_type(self, var_type: str):
         return var_type in ("i32", "f64", "bool", "str", "unit")
@@ -261,6 +262,21 @@ class SymbolTable:
             value.value, var_type, is_mutable, shift=self.next_shift, is_function=False
         )
 
+    def create_argument(self, name: str, var_type: str, position: int):
+        if name in self.table:
+            raise ValueError(f"[Semantic] Variavel '{name}' ja foi declarada")
+        if not self._is_known_type(var_type):
+            raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
+
+        arg_offset = 8 + (4 * position)
+        self.table[name] = Variable(
+            None,
+            var_type,
+            is_mutable=False,
+            shift=-arg_offset,
+            is_function=False,
+        )
+
     def set_value(self, name: str, value):
         variable = self._get_variable_ref(name)
         if variable.is_function:
@@ -328,7 +344,12 @@ class Identifier(Node):
 
     def generate(self, st):
         shift = st.get_value(self.value).shift
-        Code.append(f"  mov eax, [ebp-{shift}]")
+        if shift is None:
+            raise ValueError(f"[Codegen] Identificador '{self.value}' sem endereco")
+        if shift >= 0:
+            Code.append(f"  mov eax, [ebp-{shift}]")
+        else:
+            Code.append(f"  mov eax, [ebp+{-shift}]")
 
 
 class FieldAccess(Node):
@@ -508,7 +529,12 @@ class Assignment(Node):
         self.children[1].generate(st)
         name = self.children[0].value
         shift = st.get_value(name).shift
-        Code.append(f"  mov [ebp-{shift}], eax")
+        if shift is None:
+            raise ValueError(f"[Codegen] Identificador '{name}' sem endereco")
+        if shift >= 0:
+            Code.append(f"  mov [ebp-{shift}], eax")
+        else:
+            Code.append(f"  mov [ebp+{-shift}], eax")
 
 
 class VarDec(Node):
@@ -550,7 +576,7 @@ class StructDec(Node):
         st.create_struct(struct_name, fields)
 
     def generate(self, st):
-        pass
+        self.evaluate(st)
 
 
 class Return(Node):
@@ -558,7 +584,11 @@ class Return(Node):
         return Variable(self.children[0].evaluate(st), "__return__")
 
     def generate(self, st):
-        pass
+        self.children[0].generate(st)
+        end_label = getattr(st, "current_function_end_label", None)
+        if end_label is None:
+            raise ValueError("[Codegen] return fora de funcao nao suportado")
+        Code.append(f"  jmp {end_label}")
 
 
 class FuncDec(Node):
@@ -577,7 +607,33 @@ class FuncDec(Node):
         )
 
     def generate(self, st):
-        pass
+        func_name = self.children[0].value
+        params = self.children[1:-1]
+        func_block = self.children[-1]
+
+        if self.value == "str":
+            raise ValueError(
+                f"[Codegen] Retorno str nao suportado em funcao '{func_name}'"
+            )
+
+        func_st = SymbolTable(parent=None)
+        func_end_label = f"__func_end_{func_name}_{self.id}"
+        func_st.current_function_end_label = func_end_label
+        for idx, param_node in enumerate(params):
+            if param_node.value == "str":
+                raise ValueError(
+                    f"[Codegen] Parametro str nao suportado em funcao '{func_name}'"
+                )
+            func_st.create_argument(param_node.children[0].value, param_node.value, idx)
+
+        Code.append(f"{func_name}:")
+        Code.append("  push ebp")
+        Code.append("  mov ebp, esp")
+        func_block.generate(func_st)
+        Code.append(f"{func_end_label}:")
+        Code.append("  mov esp, ebp")
+        Code.append("  pop ebp")
+        Code.append("  ret")
 
 
 class FuncCall(Node):
@@ -649,7 +705,12 @@ class FuncCall(Node):
         return return_value
 
     def generate(self, st):
-        pass
+        for arg_node in reversed(self.children):
+            arg_node.generate(st)
+            Code.append("  push eax")
+        Code.append(f"  call {self.value}")
+        if len(self.children) > 0:
+            Code.append(f"  add esp, {len(self.children) * 4}")
 
 
 class Block(Node):
@@ -665,6 +726,25 @@ class Block(Node):
                 return result
 
     def generate(self, st):
+        if getattr(self, "is_program", False):
+            non_func_nodes = []
+            func_nodes = []
+            for child in self.children:
+                if isinstance(child, FuncDec):
+                    func_nodes.append(child)
+                else:
+                    non_func_nodes.append(child)
+
+            for child in non_func_nodes:
+                child.generate(st)
+
+            if len(func_nodes) > 0:
+                Code.append("  jmp __program_end")
+                for func_node in func_nodes:
+                    func_node.generate(st)
+                Code.append("__program_end:")
+            return
+
         for child in self.children:
             child.generate(st)
 
@@ -1132,7 +1212,9 @@ class Parser:
                 instructions.append(Parser.parse_func_declaration())
             else:
                 raise ValueError("[Parser] Programa aceita apenas declaracoes globais")
-        return Block("BLOCK", instructions)
+        program = Block("BLOCK", instructions)
+        program.is_program = True
+        return program
 
     @staticmethod
     def parse_block():
@@ -1438,8 +1520,15 @@ def main():
 
     filtered_code = PrePro.filter(source_code)
     tree = Parser.run(filtered_code)
-    st = SymbolTable()
-    tree.evaluate(st)
+    st_eval = SymbolTable()
+    tree.evaluate(st_eval)
+
+    st_codegen = SymbolTable()
+    Code.instructions = []
+    tree.generate(st_codegen)
+
+    output_path = os.path.splitext(input_path)[0] + ".asm"
+    Code.dump(output_path)
 
 
 if __name__ == "__main__":
