@@ -1122,7 +1122,9 @@ class Parser:
     def parse_program():
         instructions = []
         while Parser.lexer.next.type != "EOF":
-            if Parser.lexer.next.type == "LET":
+            if Parser.lexer.next.type == "END":
+                Parser.lexer.select_next()
+            elif Parser.lexer.next.type == "LET":
                 instructions.append(Parser.parse_var_declaration())
             elif Parser.lexer.next.type == "STRUCT":
                 instructions.append(Parser.parse_struct_declaration())
