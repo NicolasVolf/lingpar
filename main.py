@@ -60,25 +60,175 @@ class Variable:
         self.is_function = is_function
 
 
+class StructType:
+    def __init__(self, name: str, fields: Dict[str, Variable]):
+        self.name = name
+        self.fields = fields
+
+
+class StructInstance:
+    def __init__(self, struct_name: str, fields: Dict[str, Variable]):
+        self.struct_name = struct_name
+        self.fields = fields
+
+
 class SymbolTable:
     def __init__(self, parent=None):
         self.table: Dict[str, Variable] = {}
+        self.structs: Dict[str, StructType] = {}
         self.next_shift = 0
         self.parent = parent
 
-    def get_value(self, name: str):
-        if name in self.table:
-            var = self.table[name]
-            return Variable(
-                var.value,
-                var.type,
-                var.is_mutable,
-                shift=var.shift,
-                is_function=var.is_function,
+    def _is_primitive_type(self, var_type: str):
+        return var_type in ("i32", "f64", "bool", "str", "unit")
+
+    def _root(self):
+        root = self
+        while root.parent is not None:
+            root = root.parent
+        return root
+
+    def create_struct(self, name: str, fields: Dict[str, Variable]):
+        root = self._root()
+        if name in root.structs:
+            raise ValueError(f"[Semantic] Struct '{name}' ja foi declarada")
+        root.structs[name] = StructType(name, fields)
+
+    def get_struct(self, name: str):
+        root = self._root()
+        if name in root.structs:
+            return root.structs[name]
+        raise ValueError(f"[Semantic] Struct '{name}' nao existe")
+
+    def _is_known_type(self, var_type: str):
+        if self._is_primitive_type(var_type):
+            return True
+        root = self._root()
+        return var_type in root.structs
+
+    def _instantiate_struct(self, struct_name: str, stack=None):
+        if stack is None:
+            stack = set()
+        if struct_name in stack:
+            raise ValueError(
+                f"[Semantic] Ciclo de structs detectado em '{struct_name}'"
             )
+
+        struct_def = self.get_struct(struct_name)
+        stack.add(struct_name)
+        fields = {}
+        for field_name, field_meta in struct_def.fields.items():
+            field_type = field_meta.type
+            if self._is_primitive_type(field_type):
+                default_field = self._default_for_type(field_type, stack)
+            else:
+                nested = self._instantiate_struct(field_type, stack)
+                default_field = Variable(nested, field_type)
+            fields[field_name] = Variable(
+                default_field.value,
+                field_type,
+                is_mutable=field_meta.is_mutable,
+            )
+        stack.remove(struct_name)
+        return StructInstance(struct_name, fields)
+
+    def _default_for_type(self, var_type: str, stack=None):
+        if var_type == "i32":
+            return Variable(0, "i32")
+        if var_type == "f64":
+            return Variable(0.0, "f64")
+        if var_type == "bool":
+            return Variable(False, "bool")
+        if var_type == "str":
+            return Variable("", "str")
+        if var_type == "unit":
+            return Variable(None, "unit")
+        if self._is_known_type(var_type):
+            return Variable(self._instantiate_struct(var_type, stack), var_type)
+        raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
+
+    def _is_valid_value_for_type(self, value, expected_type: str):
+        if not isinstance(value, Variable):
+            return False
+        if value.type != expected_type:
+            return False
+        if expected_type == "i32":
+            return type(value.value) is int
+        if expected_type == "f64":
+            return type(value.value) is float
+        if expected_type == "bool":
+            return type(value.value) is bool
+        if expected_type == "str":
+            return type(value.value) is str
+        if expected_type == "unit":
+            return value.value is None
+        return isinstance(value.value, StructInstance)
+
+    def _get_variable_ref(self, name: str):
+        if name in self.table:
+            return self.table[name]
         if self.parent is not None:
-            return self.parent.get_value(name)
+            return self.parent._get_variable_ref(name)
         raise ValueError(f"[Semantic] Variavel '{name}' nao existe")
+
+    def _resolve_path_ref(self, path):
+        if len(path) == 0:
+            raise ValueError("[Semantic] Caminho vazio de acesso")
+
+        current_var = self._get_variable_ref(path[0])
+        if current_var.is_function:
+            raise ValueError(f"[Semantic] '{path[0]}' e uma funcao e nao um valor")
+
+        for segment in path[1:]:
+            if not isinstance(current_var.value, StructInstance):
+                raise ValueError(
+                    f"[Semantic] '{segment}' nao pode ser acessado em valor nao-struct"
+                )
+
+            struct_def = self.get_struct(current_var.type)
+            if segment not in struct_def.fields:
+                raise ValueError(
+                    f"[Semantic] Campo '{segment}' nao existe em struct '{current_var.type}'"
+                )
+            current_var = current_var.value.fields[segment]
+
+        return current_var
+
+    def get_path_value(self, path):
+        var = self._resolve_path_ref(path)
+        return Variable(
+            var.value,
+            var.type,
+            var.is_mutable,
+            shift=var.shift,
+            is_function=var.is_function,
+        )
+
+    def set_path_value(self, path, value):
+        if len(path) == 1:
+            self.set_value(path[0], value)
+            return
+
+        target_var = self._resolve_path_ref(path)
+        if not target_var.is_mutable:
+            raise ValueError(f"[Semantic] Campo '{path[-1]}' nao e mutavel")
+
+        if not self._is_valid_value_for_type(value, target_var.type):
+            raise ValueError(
+                f"[Semantic] Tipo invalido para '{'.'.join(path)}': esperado {target_var.type}, recebido {value.type}"
+            )
+
+        target_var.value = value.value
+
+    def get_value(self, name: str):
+        var = self._get_variable_ref(name)
+        return Variable(
+            var.value,
+            var.type,
+            var.is_mutable,
+            shift=var.shift,
+            is_function=var.is_function,
+        )
 
     def create_variable(
         self,
@@ -96,27 +246,13 @@ class SymbolTable:
             )
             return
 
-        if value is None:
-            if var_type == "i32":
-                value = Variable(0, "i32")
-            elif var_type == "bool":
-                value = Variable(False, "bool")
-            elif var_type == "str":
-                value = Variable("", "str")
-            else:
-                raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
+        if not self._is_known_type(var_type):
+            raise ValueError(f"[Semantic] Tipo invalido: {var_type}")
 
-        is_valid_type = (
-            isinstance(value, Variable)
-            and value.type == var_type
-            and (
-                (var_type == "i32" and type(value.value) is int)
-                or (var_type == "f64" and type(value.value) is float)
-                or (var_type == "bool" and type(value.value) is bool)
-                or (var_type == "str" and type(value.value) is str)
-            )
-        )
-        if not is_valid_type:
+        if value is None:
+            value = self._default_for_type(var_type)
+
+        if not self._is_valid_value_for_type(value, var_type):
             raise ValueError(
                 f"[Semantic] Tipo invalido para '{name}': esperado {var_type}, recebido {value.type}"
             )
@@ -126,13 +262,7 @@ class SymbolTable:
         )
 
     def set_value(self, name: str, value):
-        if name not in self.table:
-            if self.parent is not None:
-                self.parent.set_value(name, value)
-                return
-            raise ValueError(f"[Semantic] Variavel '{name}' nao foi declarada")
-
-        variable = self.table[name]
+        variable = self._get_variable_ref(name)
         if variable.is_function:
             raise ValueError(
                 f"[Semantic] '{name}' e uma funcao e nao pode receber atribuicao"
@@ -140,17 +270,7 @@ class SymbolTable:
         if not variable.is_mutable:
             raise ValueError(f"[Semantic] Variavel '{name}' nao e mutavel")
 
-        is_valid_type = (
-            isinstance(value, Variable)
-            and value.type == variable.type
-            and (
-                (variable.type == "i32" and type(value.value) is int)
-                or (variable.type == "f64" and type(value.value) is float)
-                or (variable.type == "bool" and type(value.value) is bool)
-                or (variable.type == "str" and type(value.value) is str)
-            )
-        )
-        if not is_valid_type:
+        if not self._is_valid_value_for_type(value, variable.type):
             raise ValueError(
                 f"[Semantic] Tipo invalido para '{name}': esperado {variable.type}, recebido {value.type}"
             )
@@ -209,6 +329,14 @@ class Identifier(Node):
     def generate(self, st):
         shift = st.get_value(self.value).shift
         Code.append(f"  mov eax, [ebp-{shift}]")
+
+
+class FieldAccess(Node):
+    def evaluate(self, st):
+        return st.get_path_value(self.value)
+
+    def generate(self, st):
+        pass
 
 
 class UnOp(Node):
@@ -369,9 +497,12 @@ class Print(Node):
 
 class Assignment(Node):
     def evaluate(self, st):
-        var_name = self.children[0].value
         val = self.children[1].evaluate(st)
-        st.set_value(var_name, val)
+        target = self.children[0]
+        if isinstance(target, FieldAccess):
+            st.set_path_value(target.value, val)
+        else:
+            st.set_value(target.value, val)
 
     def generate(self, st):
         self.children[1].generate(st)
@@ -398,6 +529,28 @@ class VarDec(Node):
             self.children[1].generate(st)
             shift = st.get_value(var_name).shift
             Code.append(f"  mov [ebp-{shift}], eax")
+
+
+class StructDec(Node):
+    def evaluate(self, st):
+        struct_name = self.value
+        fields: Dict[str, Variable] = {}
+        for field_node in self.children:
+            field_name = field_node.children[0].value
+            field_type = field_node.value
+            if field_name in fields:
+                raise ValueError(
+                    f"[Semantic] Campo '{field_name}' duplicado em struct '{struct_name}'"
+                )
+            fields[field_name] = Variable(
+                None,
+                field_type,
+                is_mutable=getattr(field_node, "is_mutable", False),
+            )
+        st.create_struct(struct_name, fields)
+
+    def generate(self, st):
+        pass
 
 
 class Return(Node):
@@ -608,6 +761,7 @@ class Lexer:
         "while": "WHILE",
         "let": "LET",
         "mut": "MUT",
+        "struct": "STRUCT",
         "fn": "FUNC",
         "return": "RETURN",
         "true": "BOOL",
@@ -675,6 +829,9 @@ class Lexer:
             self.position += 1
         elif char == ":":
             self.next = Token("COLON", ":")
+            self.position += 1
+        elif char == ".":
+            self.next = Token("DOT", ".")
             self.position += 1
         elif char == ">":
             self.next = Token("GT", ">")
@@ -783,6 +940,25 @@ class Parser:
     lexer = None
 
     @staticmethod
+    def parse_type_name():
+        if Parser.lexer.next.type not in ("TYPE", "IDEN"):
+            raise ValueError("[Parser] Tipo esperado na declaracao")
+        type_name = Parser.lexer.next.value
+        Parser.lexer.select_next()
+        return type_name
+
+    @staticmethod
+    def parse_identifier_path_from(first_name: str):
+        segments = [first_name]
+        while Parser.lexer.next.type == "DOT":
+            Parser.lexer.select_next()
+            if Parser.lexer.next.type != "IDEN":
+                raise ValueError("[Parser] Identificador esperado apos '.'")
+            segments.append(Parser.lexer.next.value)
+            Parser.lexer.select_next()
+        return segments
+
+    @staticmethod
     def parse_var_declaration():
         if Parser.lexer.next.type != "LET":
             raise ValueError("[Parser] 'let' esperado na declaracao")
@@ -803,13 +979,14 @@ class Parser:
             raise ValueError("[Parser] ':' esperado na declaracao")
         Parser.lexer.select_next()
 
-        if Parser.lexer.next.type != "TYPE":
-            raise ValueError("[Parser] Tipo esperado na declaracao")
-        declared_type = Parser.lexer.next.value
-        Parser.lexer.select_next()
+        declared_type = Parser.parse_type_name()
 
         children = [ident_node]
         if Parser.lexer.next.type == "ASSIGN":
+            if declared_type not in ("i32", "f64", "bool", "str", "unit"):
+                raise ValueError(
+                    "[Parser] Inicializacao na declaracao de struct nao e suportada"
+                )
             Parser.lexer.select_next()
             children.append(Parser.parse_bool_expression())
 
@@ -820,6 +997,63 @@ class Parser:
         vardec_node = VarDec(declared_type, children)
         vardec_node.is_mutable = is_mutable
         return vardec_node
+
+    @staticmethod
+    def parse_struct_field_declaration():
+        if Parser.lexer.next.type != "LET":
+            raise ValueError("[Parser] 'let' esperado no campo da struct")
+        Parser.lexer.select_next()
+
+        is_mutable = False
+        if Parser.lexer.next.type == "MUT":
+            is_mutable = True
+            Parser.lexer.select_next()
+
+        if Parser.lexer.next.type != "IDEN":
+            raise ValueError("[Parser] Identificador esperado no campo da struct")
+        ident_node = Identifier(Parser.lexer.next.value, [])
+        Parser.lexer.select_next()
+
+        if Parser.lexer.next.type != "COLON":
+            raise ValueError("[Parser] ':' esperado no campo da struct")
+        Parser.lexer.select_next()
+
+        field_type = Parser.parse_type_name()
+
+        if Parser.lexer.next.type == "ASSIGN":
+            raise ValueError("[Parser] Inicializacao de campo em struct nao suportada")
+
+        if Parser.lexer.next.type != "END":
+            raise ValueError("[Parser] ';' esperado no final do campo da struct")
+        Parser.lexer.select_next()
+
+        field_node = VarDec(field_type, [ident_node])
+        field_node.is_mutable = is_mutable
+        return field_node
+
+    @staticmethod
+    def parse_struct_declaration():
+        if Parser.lexer.next.type != "STRUCT":
+            raise ValueError("[Parser] 'struct' esperado na declaracao")
+        Parser.lexer.select_next()
+
+        if Parser.lexer.next.type != "IDEN":
+            raise ValueError("[Parser] Nome da struct esperado")
+        struct_name = Parser.lexer.next.value
+        Parser.lexer.select_next()
+
+        if Parser.lexer.next.type != "OPEN_BRA":
+            raise ValueError("[Parser] '{' esperado na declaracao de struct")
+        Parser.lexer.select_next()
+
+        fields = []
+        while Parser.lexer.next.type != "CLOSE_BRA":
+            if Parser.lexer.next.type == "EOF":
+                raise ValueError("[Parser] '}' esperado para fechar struct")
+            fields.append(Parser.parse_struct_field_declaration())
+
+        Parser.lexer.select_next()
+        return StructDec(struct_name, fields)
 
     @staticmethod
     def parse_func_declaration():
@@ -849,10 +1083,7 @@ class Parser:
                     raise ValueError("[Parser] ':' esperado em parametro")
                 Parser.lexer.select_next()
 
-                if Parser.lexer.next.type != "TYPE":
-                    raise ValueError("[Parser] Tipo do parametro esperado")
-                param_type = Parser.lexer.next.value
-                Parser.lexer.select_next()
+                param_type = Parser.parse_type_name()
 
                 param_node = VarDec(param_type, [Identifier(param_name, [])])
                 param_node.is_mutable = False
@@ -870,6 +1101,9 @@ class Parser:
         if Parser.lexer.next.type == "ARROW":
             Parser.lexer.select_next()
             if Parser.lexer.next.type == "TYPE":
+                return_type = Parser.lexer.next.value
+                Parser.lexer.select_next()
+            elif Parser.lexer.next.type == "IDEN":
                 return_type = Parser.lexer.next.value
                 Parser.lexer.select_next()
             elif Parser.lexer.next.type == "OPEN_PAR":
@@ -890,6 +1124,8 @@ class Parser:
         while Parser.lexer.next.type != "EOF":
             if Parser.lexer.next.type == "LET":
                 instructions.append(Parser.parse_var_declaration())
+            elif Parser.lexer.next.type == "STRUCT":
+                instructions.append(Parser.parse_struct_declaration())
             elif Parser.lexer.next.type == "FUNC":
                 instructions.append(Parser.parse_func_declaration())
             else:
@@ -932,17 +1168,24 @@ class Parser:
         if tok.type == "IDEN":
             name = tok.value
             Parser.lexer.select_next()
+            path = Parser.parse_identifier_path_from(name)
+            target_node = (
+                Identifier(path[0], []) if len(path) == 1 else FieldAccess(path, [])
+            )
 
             if Parser.lexer.next.type == "ASSIGN":
-                ident_node = Identifier(name, [])
                 Parser.lexer.select_next()
                 expr = Parser.parse_bool_expression()
                 if Parser.lexer.next.type != "END":
                     raise ValueError("[Parser] ';' esperado no final da atribuicao")
                 Parser.lexer.select_next()
-                return Assignment("=", [ident_node, expr])
+                return Assignment("=", [target_node, expr])
 
             if Parser.lexer.next.type == "OPEN_PAR":
+                if len(path) != 1:
+                    raise ValueError(
+                        "[Parser] Chamada de funcao invalida em acesso com '.'"
+                    )
                 Parser.lexer.select_next()
                 args = []
                 if Parser.lexer.next.type != "CLOSE_PAR":
@@ -1019,6 +1262,9 @@ class Parser:
 
         if tok.type == "FUNC":
             raise ValueError("[Parser] Nao e permitido declarar funcao dentro de bloco")
+
+        if tok.type == "STRUCT":
+            raise ValueError("[Parser] Nao e permitido declarar struct dentro de bloco")
 
         if tok.type == "END":
             Parser.lexer.select_next()
@@ -1135,7 +1381,10 @@ class Parser:
                     raise ValueError("[Parser] ')' esperado na chamada de funcao")
                 Parser.lexer.select_next()
                 return FuncCall(ident, args)
-            return Identifier(ident, [])
+            path = Parser.parse_identifier_path_from(ident)
+            if len(path) == 1:
+                return Identifier(ident, [])
+            return FieldAccess(path, [])
 
         if tok.type == "PLUS":
             Parser.lexer.select_next()
