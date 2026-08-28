@@ -149,6 +149,156 @@ Esse fato revela o princípio da **separação entre front-end e back-end**: o f
 
 ---
 
+## Roteiro 9
+
+### O que o Roteiro 9 introduz
+
+O R9 adiciona **funções e escopo de variáveis** ao compilador. Até o R8, o programa inteiro era um bloco único com uma SymbolTable plana — todas as variáveis viviam no mesmo namespace e não havia como reutilizar código. O R9 muda isso em duas frentes:
+
+**1. Funções** — a linguagem passa a aceitar declarações `fn nome(params) -> tipo { corpo }` no nível global. Qualquer função pode chamar qualquer outra. Funções **não podem ser aninhadas** (sem closures). `main()` é obrigatória e é chamada automaticamente pelo compilador ao final da execução.
+
+**2. Escopo léxico** — a `SymbolTable` vira uma **lista ligada reversa**: cada escopo tem um ponteiro `parent` para o escopo externo. Variáveis declaradas num bloco interno não existem fora dele, mas blocos internos podem ler variáveis de escopos externos. Funções veem apenas variáveis globais + seus próprios parâmetros (não as variáveis do chamador).
+
+### O que foi adicionado/modificado
+
+| Componente | Mudança |
+|---|---|
+| **Lexer** | 4 tokens novos: `fn` (FUNC), `return` (RETURN), `,` (COMMA), `->` (ARROW com lookahead) |
+| **`Variable`** | Ganhou campos `shift` (codegen) e `is_function: bool` |
+| **`SymbolTable`** | Atributo `parent`; `get_value`/`set_value` sobem a cadeia recursivamente; `create_variable` aceita `is_function=True` para guardar referência ao nó `FuncDec` sem alocar shift |
+| **Nós AST novos** | `Return` (sentinela `"__return__"`), `FuncDec` (registra função na raiz), `FuncCall` (executa a função num escopo isolado) |
+| **`Block.evaluate`** | Cria `SymbolTable(parent=st)` para sub-blocos aninhados; propaga sinal `"__return__"` quando encontra |
+| **`If` / `While`** | Propagam `"__return__"` quando o corpo o retorna |
+| **`Parser.parse_program`** | Aceita `fn` além de `let` no topo do arquivo |
+| **`Parser.parse_statement`** | Reconhece `return expr;` e disambigua `IDEN =` (atribuição) vs `IDEN (` (chamada) via lookahead de 1 |
+| **`Parser.parse_factor`** | Também detecta `IDEN (` como `FuncCall` em contextos de expressão |
+| **`Parser.run`** | Injeta `FuncCall("main", [])` ao final da árvore |
+| **`FuncDec.generate` / `FuncCall.generate`** | São `pass` no R9 puro — codegen completo de funções só veio no extra 3.0 |
+
+### Como o return atravessa a árvore
+
+O mecanismo central do R9 é a **sentinela `"__return__"`**:
+```
+return expr;
+  → Return.evaluate: Variable(expr_value, "__return__")
+  → Block.evaluate: vê type=="__return__", para o loop e propaga
+  → If/While.evaluate: também propagam se corpo retornar "__return__"
+  → FuncCall.evaluate: recebe o sinal, desempacota, valida tipo de retorno
+```
+Sem essa sentinela, um `return` dentro de um `if` ou `while` seria "engolido" e a função continuaria executando.
+
+### Escopo léxico vs dinâmico
+
+`FuncCall` cria `SymbolTable(parent=root)`, **não** `parent=st` (o escopo do chamador). Isso implementa escopo **léxico**: a função enxerga apenas globais + seus parâmetros. Se fosse `parent=st`, enxergaria as variáveis do ponto onde foi chamada (escopo **dinâmico**). Rust usa léxico.
+
+---
+
+**Q17. Por que `FuncDec.evaluate` sobe pela cadeia de `parent` até a raiz antes de registrar a função, em vez de declará-la na `SymbolTable` corrente?**
+Funções precisam ser **globalmente acessíveis** — qualquer outra função ou bloco do programa pode chamá-las. Se `FuncDec` registrasse a função no `st` local, dois problemas surgiriam: (a) chamadas a partir de outros escopos teriam que subir a cadeia para encontrá-la — funcionaria por acaso porque `get_value` é recursivo, mas só se a função estivesse num escopo ancestral do chamador; (b) escopos *irmãos* (ex.: dois blocos no `main`) não compartilham ancestral além da raiz, então uma função declarada num bloco interno seria invisível a outro. Subir até a raiz garante que **toda chamada vê a função**, independentemente de onde for feita. O loop `while root.parent is not None: root = root.parent` é o mecanismo que materializa essa decisão.
+
+---
+
+**Q18. Por que `FuncCall` cria a `SymbolTable` da função com `parent=root` em vez de `parent=st` (o `st` do chamador)?**
+Essa decisão é o que distingue **escopo léxico** (estático) de **escopo dinâmico**. Com `parent=root`, a função enxerga apenas variáveis globais e seus próprios parâmetros — nunca as locais do chamador. Com `parent=st`, a função enxergaria todo o ambiente do ponto onde foi *chamada* (escopo dinâmico, estilo lisp antigo).
+
+Exemplo concreto:
+```rust
+fn main() { let mut x: i32 = 10; foo(); }
+fn foo() { println!(x); }   // erro com parent=root; funcionaria com parent=st
+```
+Rust real (e a linguagem do roteiro) usa escopo léxico, então `parent=root` é a escolha correta. Note também que os argumentos são avaliados **no `st` do chamador** (`arg_node.evaluate(st)`) antes de serem inseridos na nova tabela — isso é coerente com escopo léxico: o chamador resolve seus próprios símbolos antes de passar valores prontos para a função.
+
+---
+
+**Q19. Por que `Return.evaluate` empacota o valor em `Variable(value, "__return__")` em vez de simplesmente retornar `value`?**
+Os métodos `evaluate` de `Block`, `If` e `While` precisam distinguir três situações para um filho avaliado: (a) retornou `None` (statement comum, segue o fluxo), (b) retornou um `Variable` que é apenas um valor incidental, (c) retornou um `Variable` que é um **sinal de "estou voltando da função agora"**. Sem um marcador, não há como (b) e (c) serem distinguidos.
+
+A escolha de usar `type == "__return__"` é uma **sentinela** — um valor que não pode colidir com nenhum tipo válido da linguagem (`i32`, `bool`, `str`, `f64`, `unit`). Quando `Block.evaluate` vê `result.type == "__return__"`, sabe que precisa interromper o loop e propagar o sinal para o pai. `FuncCall.evaluate` é quem desempacota: pega `return_signal.value` (o `Variable` real) e usa como valor de retorno da função.
+
+A alternativa idiomática em Python seria `raise ReturnException(value)` capturada em `FuncCall`. A versão com sentinela evita o custo de exceção e mantém o fluxo explicitamente visível na árvore.
+
+---
+
+**Q20. Por que `Block.evaluate` cria `SymbolTable(parent=st)` apenas quando o filho é outro `Block`, e não para todos os statements?**
+Porque o **escopo léxico** da linguagem é definido pelos pares `{ }`, não por cada statement individual. Um `let x: i32;` dentro de um bloco vive nesse bloco — usa o `st` corrente. Já um sub-bloco aninhado (`{ let y: i32; ... }`) precisa de um escopo próprio para que `y` desapareça ao fechar a chave.
+
+A condição `isinstance(child, Block)` é o que reconhece um sub-bloco. Se `Block.evaluate` criasse uma nova `SymbolTable` para *todo* statement, cada `let` viveria num escopo de uso único e nada mais funcionaria — as variáveis evaporariam linha a linha. Por outro lado, se nunca criasse para sub-blocos, `{ let z: i32; }; { let z: i32; }` falharia com "z já declarada", porque ambos os blocos usariam a mesma tabela.
+
+A regra "novo escopo só em bloco" reflete exatamente o que a EBNF diz: BLOCK é a única produção que abre escopo.
+
+---
+
+**Q21. Por que `If` e `While` precisam propagar `__return__` quando o corpo retorna isso, mas não fazem nada especial para qualquer outro tipo de valor?**
+Porque um `return` **dentro** de um `if` ou `while` precisa escapar da estrutura de controle e voltar para o `FuncCall` que a chamou. Sem propagar:
+```rust
+fn foo() -> i32 {
+  if (cond) { return 5; }
+  return 10;
+}
+```
+o `return 5` seria computado mas perdido — `If.evaluate` ignoraria o retorno e a função seguiria para `return 10`. Isso quebra a semântica de retorno antecipado.
+
+A razão de ignorar outros tipos é que statements comuns (`let`, `println!`, `Assignment`) retornam `None`. Eles não produzem valor que faça sentido propagar. Apenas `Return` produz a sentinela `__return__`, e essa é a única que importa subir.
+
+Conceitualmente, o que `If`/`While`/`Block` estão fazendo é o que linguagens reais implementam com **non-local control flow** (em Java/C# seria literalmente `return`; aqui é simulado pela sentinela percorrendo a árvore).
+
+---
+
+**Q22. Como o parser distingue `x = 5;` (atribuição) de `foo(1, 2);` (chamada de função), se ambos começam com `IDEN`?**
+Lookahead de 1 token. Em `parse_statement`, ao ver `IDEN`, o parser **consome o identificador** e olha o próximo token:
+- Se for `ASSIGN` → trata como `Assignment`
+- Se for `OPEN_PAR` → trata como `FuncCall`
+- Senão → erro `"'=' ou '(' esperado apos identificador"`
+
+Isso é **LL(1)** funcionando exatamente como projetado — uma única decisão local resolve a ambiguidade. A SymbolTable não é consultada nessa fase: o parser nem sabe se `foo` é uma função declarada; só vê a forma sintática. A verificação semântica (é função mesmo? aridade certa?) acontece depois, em `FuncCall.evaluate`.
+
+`parse_factor` faz a mesma disambiguação para chamadas em **contextos de expressão** (ex.: `let x: i32 = soma(3, 4);`) — também olha 1 token adiante após consumir o `IDEN`.
+
+---
+
+**Q23. Por que `Parser.run` injeta `FuncCall("main", [])` no final da árvore? E o que acontece se o programa não declarar `main`?**
+A linguagem é "main-driven": declarações de função e variáveis globais sozinhas não executam nada — são apenas registros na SymbolTable. Para o programa de fato rodar, alguém precisa **chamar** uma função. A convenção (igual a Rust, C, Java) é que essa função seja `main`. O `Parser.run` materializa essa convenção adicionando explicitamente uma chamada a `main` como último filho do `Block` raiz, depois que todas as `FuncDec`/`VarDec` globais já foram avaliadas.
+
+Se `main` não existir, o `evaluate` da `FuncCall("main", [])` cai no caminho `func_var = st.get_value("main")` → `get_value` percorre toda a cadeia `parent` até a raiz, não encontra, e lança `"Variavel 'main' nao existe"` — repackaged como `"Funcao 'main' nao foi declarada"` no `try/except` do `FuncCall`. O erro é **semântico**: sintaticamente o programa é válido, mas falta a função obrigatória.
+
+---
+
+**Q24. `parse_statement` recusa `FUNC` dentro de bloco com `"Nao e permitido declarar funcao dentro de bloco"`. Por que isso é uma regra da linguagem, e o que mudaria na SymbolTable se fosse permitido?**
+A regra é **didática**: ao restringir funções ao topo do programa, a linguagem evita lidar com **closures** e **funções aninhadas que capturam variáveis do escopo léxico externo**. Como `FuncDec.evaluate` registra na *raiz*, mesmo que o parser permitisse declarações aninhadas, a função aninhada não teria acesso às variáveis do escopo onde foi escrita — quebrando a expectativa do leitor.
+
+Para suportar funções aninhadas com semântica correta (estilo Python/JavaScript), `FuncDec` teria que (a) parar de subir até a raiz e registrar no `st` corrente, e (b) guardar referência ao `st` da declaração para que a chamada criasse a `SymbolTable` com `parent=st_da_declaracao` em vez de `parent=root`. Isso implementa **closures** — o ambiente léxico viaja com a função. É exatamente como Python e JavaScript funcionam por baixo.
+
+---
+
+**Q25. Descreva `Lexer.select_next` como uma máquina de estados. Que decisões locais ele toma char-a-char e onde aparece lookahead?**
+
+`select_next` é o coração do lexer: toda vez que o parser precisa do próximo token, chama esse método, que avança `self.position` e grava o token produzido em `self.next`. Funcionalmente é um **DFA** (autômato de estados finitos determinístico) implementado como uma grande cadeia de `if/elif`, onde cada branch corresponde a um estado (ou grupo de estados) do autômato.
+
+**Estrutura geral:**
+1. **Pulo de espaços** (`isspace()`): sem estado, apenas avança.
+2. **Fim de arquivo**: emite `Token("EOF", "")` e retorna.
+3. **Despacho**: lê `char = source[position]` e entra no branch correspondente.
+
+**Estados e transições:**
+
+| Char inicial | Ação | Lookahead? |
+|---|---|---|
+| `+`, `*`, `/`, `^`, `(`, `)`, `{`, `}`, `;`, `,`, `:`, `.`, `>`, `<`, `!` | Token de 1 char, `position += 1` | Não |
+| `-` | Peek `source[position+1]`: se `>` → `ARROW("->")`, `position+=2`; senão → `MINUS`, `position+=1` | **Sim, 1 char** |
+| `=` | Peek: se `=` → `EQ("==")`, `position+=2`; senão → `ASSIGN`, `position+=1` | **Sim, 1 char** |
+| `&` | Peek: se `&` → `AND("&&")`, `position+=2`; senão → **erro léxico** `"'&' isolado invalido"` | **Sim, 1 char** |
+| `\|` | Peek: se `\|` → `OR("\|\|")`, `position+=2`; senão → **erro léxico** | **Sim, 1 char** |
+| dígito | Acumula `num` enquanto `isdigit()`. Peek para `.`: se sim, acumula parte decimal (exige outro dígito adiante) → `FLOAT`; senão → `INT` | **Sim (ponto decimal)** |
+| letra / `_` | Acumula `ident` enquanto `isalnum() or '_'`. Peek para `!` (captura `println!`, `scanln!`). Consulta `RESERVED_WORDS`: se presente → tipo reservado (ex.: `FUNC`, `RETURN`, `TYPE`; `BOOL` vira `Token("BOOL", ident=="true")`); senão → `Token("IDEN", ident)` | **Sim (o `!` e a tabela)** |
+| `"` | Consome chars até `"` de fechamento. `\n` dentro → erro; EOF antes de `"` → erro léxico | Não (sentinela `"`) |
+| qualquer outro | `raise ValueError("[Lexer] Simbolo invalido: ...")` | — |
+
+**Por que isso é equivalente a um DFA:** cada branch entra em um estado implícito ("dentro de INT", "dentro de IDEN", "dentro de string"). As transições dependem apenas do char atual e, com lookahead, do seguinte — nunca de memória arbitrária. Um DFA formal teria nós explícitos para cada estado; aqui esses nós são os branches do `if/elif`. A equivalência vale porque a função é determinística e sem contexto além do acumulador `num`/`ident`.
+
+**Consequência para classificação de erros:** qualquer falha aqui (`&` sozinho, `|` sozinho, string não fechada, char inválido) é um **erro léxico** — o lexer não consegue produzir um token válido para repassar ao parser. O parser nunca chega a ver o problema.
+
+---
+
 ## Perguntas Integradoras
 
 **QI1. Para `let mut i: i32 = 2;` em cada modo:**
@@ -185,6 +335,26 @@ O incremento ocorre **após** o corpo e **antes** do salto para o loop, tal qual
 
 **QI4. Por que `Node.id` estático e único globalmente não é um problema?**
 Se dois nós tivessem o mesmo `id`, seus labels colidiriam no Assembly (`loop_5:` apareceria duas vezes), causando erro de montagem ou saltos para o ponto errado. O `id` estático é **seguro** porque: (a) dentro de uma execução do compilador, `new_id()` só incrementa — nunca repete; (b) entre execuções, o processo Python reinicia do zero — `Node.id = 0` é o estado inicial. Não há estado compartilhado entre compilações de arquivos diferentes. Cada nó da AST representa um único ponto do programa, e dois nós com o mesmo ID seria impossível por construção do contador.
+
+---
+
+**QI5. Compare a SymbolTable do R7/R8 (única) com a do R9 (lista ligada). Que problema do R9 a estrutura encadeada resolve, e o que ela quebraria se fosse usada do mesmo jeito no R8?**
+No R7/R8, `SymbolTable` era um único dicionário plano: todas as variáveis viviam no mesmo namespace. Isso bastava porque não havia funções nem escopos aninhados — todo o programa era um bloco só.
+
+O R9 introduz dois novos contextos onde variáveis precisam ser isoladas: (a) **parâmetros e locais de função** não devem vazar para o caller, e (b) **blocos aninhados** podem redeclarar nomes (`{ let x: i32; { let x: i32; } }` é válido). A estrutura encadeada resolve isso permitindo que cada escopo tenha sua própria tabela e ainda assim consiga *ler* tabelas externas via `parent`.
+
+Se levássemos a estrutura encadeada para o R7 sem nenhuma outra mudança, nada quebraria — porque o R7 só usaria uma cadeia de tamanho 1 (root, sem filhos). É retrocompatível por construção.
+
+Mas o **R8** (codegen) tem um detalhe sutil: `next_shift` é por-tabela. Se um bloco aninhado tem sua própria tabela com `next_shift=0`, e usa `sub esp, 4` para alocar uma local, o offset relativo a `ebp` colide com locais do bloco pai — porque o pai já alocou outras a `ebp-4`, `ebp-8`, etc. O codegen precisaria propagar `next_shift` da tabela pai. Esse é um dos motivos pelos quais o R9 puro **não tem `generate()` real para `FuncDec`/`FuncCall`** — o codegen completo só veio com o extra do 3.0.
+
+---
+
+**QI6. No R9 puro, `FuncDec.generate` e `FuncCall.generate` são `pass` (não fazem nada). Por que o roteiro foi entregue assim, e o que isso implica sobre o compilador nessa versão?**
+O R9 foi entregue com semântica completa **só no interpretador** (`evaluate`), não no compilador (`generate`). É uma decisão pragmática: implementar funções no codegen exige convenção de chamada (push de argumentos na pilha, prologue/epilogue com ebp/esp, retorno via registrador, layout de offsets positivos para parâmetros e negativos para locais), e isso é trabalho substancial — daí ter virado conteúdo do extra (3.0).
+
+O efeito prático na versão R9 é que `python main.py prog.rs` funciona como **interpretador puro** para programas com funções, mas o `.asm` gerado é vazio em relação ao corpo das funções. Isso quebra o invariante anterior do R8 ("`evaluate` e `generate` produzem o mesmo resultado") — agora só `evaluate` é a referência semântica completa para programas com `fn`.
+
+Esse desencaixe entre frontend (parser+evaluate) e backend (generate) é típico em compiladores reais: novos recursos costumam aparecer primeiro no interpretador/typechecker e só depois no gerador de código. Aqui isso ficou explícito na própria estrutura das versões.
 
 ---
 
@@ -254,6 +424,102 @@ If
 
 ---
 
+**QF4. Rastreie `fn soma(a: i32, b: i32) -> i32 { return a + b; }` seguido de `soma(3, 4)` pelas 5 fases.**
+
+**Tokens (declaração):** `FUNC IDEN("soma") OPEN_PAR IDEN("a") COLON TYPE("i32") COMMA IDEN("b") COLON TYPE("i32") CLOSE_PAR ARROW TYPE("i32") OPEN_BRA RETURN IDEN("a") PLUS IDEN("b") END CLOSE_BRA`
+
+**Tokens (chamada):** `IDEN("soma") OPEN_PAR INT(3) COMMA INT(4) CLOSE_PAR END`
+
+**Sintática:** `parse_program` vê `FUNC` → `parse_func_declaration`. Consome `fn`, `IDEN("soma")`, `(`. Loop de params: `a:i32` → `VarDec("i32", [Identifier("a")])`; `,`; `b:i32` → idem. `)`, `->`, `TYPE("i32")` → `return_type="i32"`. `parse_block` parseia `{ return a+b; }` → `Block([Return("RETURN", [BinOp("+", [Identifier("a"), Identifier("b")])])])`. Resultado: `FuncDec("i32", [Identifier("soma"), VarDec a, VarDec b, Block])`.
+
+Para a chamada como statement: `parse_statement` vê `IDEN("soma")`, consome, vê `OPEN_PAR` → modo `FuncCall`. Parseia `IntVal(3)`, vê `COMMA`, parseia `IntVal(4)`. `)` `;` → `FuncCall("soma", [IntVal(3), IntVal(4)])`.
+
+**AST (resumida):**
+```
+Block(is_program)
+├── FuncDec("i32")
+│   ├── Identifier("soma")
+│   ├── VarDec("i32") → [Identifier("a")]
+│   ├── VarDec("i32") → [Identifier("b")]
+│   └── Block
+│       └── Return
+│           └── BinOp("+")
+│               ├── Identifier("a")
+│               └── Identifier("b")
+└── FuncCall("soma", [IntVal(3), IntVal(4)])
+```
+
+**Semântica:**
+1. `FuncDec.evaluate(st)`: sobe ao root via `while root.parent is not None`, chama `root.create_variable("soma", Variable(self, "i32"), "i32", is_function=True)`. Tabela raiz: `"soma" → Variable(value=<FuncDec node>, type="i32", is_function=True)`.
+2. `FuncCall("soma", [IntVal(3), IntVal(4)]).evaluate(st)`:
+   - `get_value("soma")` → recupera o nó `FuncDec`. `is_function=True` ✓
+   - `params = [VarDec(a), VarDec(b)]`; `len(children)==2 == len(params)` ✓
+   - Cria `call_st = SymbolTable(parent=root)`
+   - Avalia `IntVal(3)` no `st` do chamador → `Variable(3, "i32")`; `call_st.create_variable("a", Variable(3,"i32"), "i32")`
+   - Idem `b=4`
+   - `func_block.evaluate(call_st)`: executa `Return.evaluate` → `BinOp("+")` busca `a`(3) e `b`(4) na `call_st`, retorna `Variable(7, "i32")`. `Return` empacota: `Variable(Variable(7,"i32"), "__return__")`.
+   - `Block.evaluate` vê `result.type == "__return__"` → propaga.
+   - `FuncCall` confere `expected_type="i32"`, `return_value.type == "i32"` ✓ → retorna `Variable(7, "i32")`.
+
+**Código (R9 puro):** `FuncDec.generate` e `FuncCall.generate` são `pass` — nada é emitido para o corpo de `soma`. No extra-3.0, `FuncDec.generate` emitiria: label `soma:`, prologue (`push ebp; mov ebp, esp`), corpo (gera `BinOp("+")`), label de fim, epilogue (`mov esp, ebp; pop ebp; ret`). `FuncCall.generate` faria: push dos args em ordem reversa, `call soma`, `add esp, 8` (limpeza).
+
+---
+
+**QF5. Rastreie o programa completo abaixo pelas 5 fases:**
+```rust
+fn main() {
+    let mut x: i32 = 1 + 2;
+    println!("{}", x);
+}
+```
+
+**Tokens:** `FUNC IDEN("main") OPEN_PAR CLOSE_PAR OPEN_BRA LET MUT IDEN("x") COLON TYPE("i32") ASSIGN INT(1) PLUS INT(2) END PRINT OPEN_PAR STR("{}") COMMA IDEN("x") CLOSE_PAR END CLOSE_BRA EOF`
+
+Observação: `println!` é reconhecido como `PRINT` (palavra reservada com `!`) porque `select_next` acumula o identificador e depois faz peek para `!`.
+
+**Sintática:**
+- `parse_program` vê `FUNC` → chama `parse_func_declaration`.
+- `parse_func_declaration`: consome `FUNC`, `IDEN("main")`, `OPEN_PAR`, `CLOSE_PAR` (0 params), sem `ARROW` → `return_type="unit"`. Chama `parse_block`.
+- `parse_block` → `OPEN_BRA`, loop de `parse_statement`:
+  - **Statement 1**: `LET MUT IDEN("x") COLON TYPE("i32") ASSIGN` → `parse_bool_expression` → ... → `parse_expression`: `IntVal(1)`, vê `PLUS`, `IntVal(2)` → `BinOp("+", [IntVal(1), IntVal(2)])`. `END` → `VarDec("i32", [Identifier("x"), BinOp(...)], is_mutable=True)`.
+  - **Statement 2**: `PRINT OPEN_PAR STR("{}") COMMA IDEN("x") CLOSE_PAR END` → `Print("PRINT", [StringVal("{}"), Identifier("x")])`.
+  - `CLOSE_BRA` → `Block([VarDec, Print])`.
+- Resultado de `parse_func_declaration`: `FuncDec("unit", [Identifier("main"), Block([VarDec, Print])])`.
+- `Parser.run` injeta `FuncCall("main", [])` como último filho do Block raiz.
+
+**AST:**
+```
+Block(programa)
+├── FuncDec("unit")
+│   ├── Identifier("main")
+│   └── Block
+│       ├── VarDec("i32", is_mutable=True)
+│       │   ├── Identifier("x")
+│       │   └── BinOp("+")
+│       │       ├── IntVal(1)
+│       │       └── IntVal(2)
+│       └── Print
+│           ├── StringVal("{}")
+│           └── Identifier("x")
+└── FuncCall("main", [])     ← injetada por Parser.run
+```
+
+**Semântica (`evaluate`):**
+1. `FuncDec.evaluate(root_st)`: sobe via `while root.parent is not None` (root_st já é raiz). Chama `root_st.create_variable("main", Variable(<FuncDec>, "unit"), "unit", is_function=True)`.
+2. `FuncCall("main", []).evaluate(root_st)`:
+   - `get_value("main")` → FuncDec ✓; `is_function=True` ✓; 0 params, 0 args ✓.
+   - Cria `call_st = SymbolTable(parent=root_st)`.
+   - Executa `func_block.evaluate(call_st)`:
+     - `VarDec.evaluate(call_st)`: `BinOp("+")` → `IntVal(1)` = `Variable(1,"i32")`, `IntVal(2)` = `Variable(2,"i32")`, soma → `Variable(3,"i32")`. `call_st.create_variable("x", Variable(3,"i32"), "i32", is_mutable=True)`.
+     - `Print.evaluate(call_st)`: avalia `Identifier("x")` → `Variable(3,"i32")`; substitui `{}` em `"{}"` → imprime `3` no terminal.
+   - `func_block` retorna `None` (sem `return`). `expected_type="unit"` e `return_signal is None` ✓.
+
+**Código (`generate`, R9 puro):** `FuncDec.generate` e `FuncCall.generate` são `pass`. O `.asm` gerado contém apenas o esqueleto (`section .data`, `section .text`, `global _start`, `_start:`, `exit`) sem nenhum corpo de função — o programa não faz nada ao ser montado e executado.
+
+No extra-3.0, `FuncDec("main").generate` emitiria: `main:` + prologue, `sub esp, 4` (para `x`), `BinOp.generate` (`mov eax, 2; push eax; mov eax, 1; pop ecx; add eax, ecx`) → `mov [ebp-4], eax`, depois `printf` para `println!`, epilogue, `ret`. `FuncCall("main").generate` emitiria `call main`.
+
+---
+
 ## Gramática Formal
 
 **QG1. Escreva a EBNF das 3 regras superiores. A gramática é ambígua?**
@@ -314,6 +580,27 @@ Se aceitássemos `a < b < c` (usando `while`), a gramática continuaria não-amb
 **Por que erros b e f não podem ser detectados depois?** → São erros na tokenização — o lexer não consegue nem produzir um token válido para o parser processar. Não há token para repassar.
 
 **Por que d, g, h não podem ser detectados antes?** → O parser vê estruturas sintaticamente corretas (`IDEN = expr;`, `expr && expr`, `if (expr) block`). Só a SymbolTable (d) ou o tipo retornado por `evaluate` (g, h) revela o problema.
+
+---
+
+**QE3. Classifique cada erro do R9 como léxico, sintático ou semântico:**
+
+| # | Código | Fase | Onde |
+|---|--------|------|------|
+| a | `fn 5x() {}` | **Sintático** | `parse_func_declaration`: token após `fn` deve ser `IDEN`, recebeu `INT`. |
+| b | `fn foo(a i32) {}` (sem `:`) | **Sintático** | `parse_func_declaration`: `':'` esperado em parametro. |
+| c | `fn foo() -> { }` | **Sintático** | Após `->` o parser exige `TYPE` ou `(`; recebeu `OPEN_BRA`. |
+| d | `soma(3);` quando `soma` espera 2 params | **Semântico** | `FuncCall.evaluate`: `len(self.children) != len(params)`. |
+| e | `let x: i32 = naoexiste();` | **Semântico** | `FuncCall.evaluate` → `get_value` não encontra, repackaged como "Funcao 'naoexiste' nao foi declarada". |
+| f | `let x: bool = soma(3, 4);` | **Semântico** | `VarDec.evaluate` → `create_variable`: valor `Variable(_, "i32")` não bate com tipo declarado `bool`. |
+| g | `fn foo() -> i32 { }` (sem return) | **Semântico** | `FuncCall.evaluate`: `return_signal is None` para função não-unit → "deve retornar valor do tipo i32". |
+| h | `fn foo() -> () { return 5; }` | **Semântico** | `FuncCall.evaluate`: `expected_type=="unit"` mas `return_signal is not None` → "e unit e nao deve retornar valor". |
+| i | `fn main() { fn helper() {} }` | **Sintático** | `parse_statement` ao ver `FUNC` lança "Nao e permitido declarar funcao dentro de bloco". |
+| j | `return 5` (sem `;`) | **Sintático** | `parse_statement` no caminho RETURN: `';' esperado apos return`. |
+| k | Programa sem `fn main()` | **Semântico** | `FuncCall("main", [])` injetada por `Parser.run` falha em `get_value` no evaluate. |
+| l | `fn foo(a: i32, a: i32) {}` | **Semântico** | `FuncCall.evaluate` → `create_variable` do segundo `a` na `call_st` lança "ja foi declarada". **Sutileza**: o erro só aparece quando `foo` é *chamada*, não na declaração. |
+
+**Por que l é semântico e não sintático?** O parser aceita `fn foo(a: i32, a: i32) {}` — a gramática EBNF não proíbe nomes repetidos. O conflito "já declarada" só é detectável em `FuncCall.evaluate`, quando o compilador tenta criar as variáveis de parâmetro na `call_st`. A declaração sozinha (`FuncDec.evaluate`) só registra o nó na raiz — não valida os parâmetros internamente.
 
 ---
 
